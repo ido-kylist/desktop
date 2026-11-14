@@ -13,7 +13,10 @@ concurrency:
 jobs:
   verify:
     name: typecheck · lint · build · test · e2e
-    runs-on: macos-14
+    # macos-latest, not a pinned arm64 label: on a private repo the arm64 runner
+    # label resolves to an unavailable configuration and the job is cancelled in
+    # seconds. Arch-specific release builds belong to the release workflow.
+    runs-on: macos-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -46,7 +49,9 @@ jobs:
         run: npx playwright test
 
       - name: Package (no publish)
-        run: pnpm exec electron-builder --mac --arm64 --publish never
+        # Host arch: CI proves the packaging pipeline works end to end. The arm64
+        # DMG is produced by the release workflow on a matching runner.
+        run: pnpm exec electron-builder --mac --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
 
