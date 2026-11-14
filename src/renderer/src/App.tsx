@@ -1,147 +1,150 @@
-import type { CleonApi, IpcError, ResponseOf } from "@shared/ipc-contract";
+import type { IpcError } from "@shared/ipc-contract";
 import { useCallback, useEffect, useState } from "react";
+import { Composer } from "./components/Composer";
+import { Diagnostics } from "./components/Diagnostics";
+import { ErrorBanner } from "./components/ErrorBanner";
+import { MessageList } from "./components/MessageList";
+import { useAutoScroll } from "./hooks/use-auto-scroll";
+import { useThreadHistory } from "./hooks/use-thread-history";
+import { bridge, sendChat, stopGeneration, subscribeToGenerationEvents } from "./lib/ipc";
+import { DEFAULT_MODEL } from "./lib/models";
+import { type ChatMessageView, THREAD_STORAGE_KEY, useChatStore } from "./store/chat-store";
 
-declare global {
-  interface Window {
-    cleon: CleonApi;
+/**
+ * The text a retry would resend: the user turn that produced the last failed answer.
+ * Null when the last turn did not fail, which is what keeps a stale banner from
+ * outliving its problem.
+ */
+function findRetryText(messages: readonly ChatMessageView[]): string | null {
+  const last = messages[messages.length - 1];
+  if (last === undefined || last.role !== "assistant" || last.errorCode === null) return null;
+
+  for (let index = messages.length - 2; index >= 0; index -= 1) {
+    const candidate = messages[index];
+    if (candidate !== undefined && candidate.role === "user") return candidate.text;
   }
-}
-
-type Info = ResponseOf<"app.info">;
-type Health = ResponseOf<"db.health">;
-type Ping = ResponseOf<"app.ping">;
-
-type Probe<T> =
-  | { state: "loading" }
-  | { state: "ok"; data: T }
-  | { state: "error"; error: IpcError };
-
-function describe(error: IpcError): string {
-  return `${error.code}: ${error.message}`;
+  return null;
 }
 
 /**
- * D0 smoke surface. It exists to prove three things at a glance: the bridge is
- * present, the protocol versions agree, and the main process can reach SQLite.
- * Nothing here is product UI — D1 replaces it with the chat surface.
+ * The read failure and the write failure are different states and are drawn
+ * differently: one is "the thread could not be restored", the other is "this turn
+ * failed". Both are stated with the contract's code.
  */
+function restoreBanner(error: IpcError | null): React.JSX.Element | null {
+  if (error === null) return null;
+  return (
+    <div className="banner" role="alert" data-testid="restore-error">
+      <div className="banner-main">
+        <span className="banner-code">{error.code}</span>
+        <span className="banner-message">{error.message}</span>
+      </div>
+    </div>
+  );
+}
+
 export function App(): React.JSX.Element {
-  const [info, setInfo] = useState<Probe<Info>>({ state: "loading" });
-  const [health, setHealth] = useState<Probe<Health>>({ state: "loading" });
-  const [pings, setPings] = useState<Ping[]>([]);
+  const threadId = useChatStore((state) => state.threadId);
+  const messages = useChatStore((state) => state.messages);
+  const streaming = useChatStore((state) => state.streaming);
+  const lastError = useChatStore((state) => state.lastError);
+  const applyEvent = useChatStore((state) => state.applyEvent);
+  const startTurn = useChatStore((state) => state.startTurn);
+  const clearStreaming = useChatStore((state) => state.clearStreaming);
+  const setLastError = useChatStore((state) => state.setLastError);
 
-  const bridge = typeof window !== "undefined" ? window.cleon : undefined;
+  const [model, setModel] = useState<string>(DEFAULT_MODEL);
 
+  const history = useThreadHistory(threadId);
+  const scroll = useAutoScroll();
+
+  // One subscription for the life of the window; the unsubscribe runs on unmount.
+  useEffect(() => subscribeToGenerationEvents(applyEvent), [applyEvent]);
+
+  // The remembered thread id is the only thing this surface persists itself.
   useEffect(() => {
-    if (!bridge) return;
+    if (threadId === null) localStorage.removeItem(THREAD_STORAGE_KEY);
+    else localStorage.setItem(THREAD_STORAGE_KEY, threadId);
+  }, [threadId]);
 
-    void bridge.invoke("app.info", {}).then((res) => {
-      setInfo(res.ok ? { state: "ok", data: res.data } : { state: "error", error: res.error });
-    });
+  const send = useCallback(
+    async (text: string) => {
+      // Ids come back from main, not from the renderer: main persists the turn and
+      // returns its row ids, and the store adopts exactly those.
+      const result = await sendChat({ threadId: useChatStore.getState().threadId, text, model });
+      if (!result.ok) {
+        setLastError(result.error);
+        return;
+      }
+      startTurn({
+        threadId: result.data.threadId,
+        userMessageId: result.data.userMessageId,
+        assistantMessageId: result.data.assistantMessageId,
+        generationId: result.data.generationId,
+        text,
+        createdAt: new Date().toISOString(),
+      });
+    },
+    [model, setLastError, startTurn],
+  );
 
-    void bridge.invoke("db.health", {}).then((res) => {
-      setHealth(res.ok ? { state: "ok", data: res.data } : { state: "error", error: res.error });
-    });
-  }, [bridge]);
+  const stop = useCallback(async () => {
+    const active = useChatStore.getState().streaming;
+    if (active === null) return;
 
-  const ping = useCallback(async () => {
-    if (!bridge) return;
-    const res = await bridge.invoke("app.ping", { nonce: crypto.randomUUID() });
-    if (res.ok) setPings((prev) => [res.data, ...prev].slice(0, 5));
-  }, [bridge]);
+    // Optimistic, so a lost terminal event cannot leave a dead Stop button on screen.
+    // Main still finishes the turn and emits `done`, which clears what is left.
+    clearStreaming(active.generationId);
 
-  const handshakeOk =
-    bridge !== undefined &&
-    info.state === "ok" &&
-    info.data.protocolVersion === bridge.protocolVersion;
+    const result = await stopGeneration(active.generationId);
+    if (!result.ok) setLastError(result.error);
+  }, [clearStreaming, setLastError]);
+
+  const last = messages[messages.length - 1];
+  const turnError: IpcError | null =
+    lastError ??
+    (last !== undefined && last.role === "assistant" && last.errorCode !== null
+      ? // A restored failure has a code but no upstream message: only the code is
+        // persisted, and inventing the rest would be a lie.
+        { code: last.errorCode, message: "No further detail was stored with this turn." }
+      : null);
+
+  const retryText = findRetryText(messages);
+  const preloadMissing = bridge() === undefined;
 
   return (
-    <div className="shell">
+    <div className="app">
       <header className="bar">
         <span className="mark" />
         <h1>Cleon</h1>
-        <span className="tag">D0 · foundation</span>
+        <span className="tag">D1 · chat</span>
       </header>
 
-      <main>
-        <section className="card">
-          <h2>Bridge</h2>
-          {!bridge && <p className="bad">window.cleon is missing — preload did not load.</p>}
-          {bridge && (
-            <>
-              <p className={handshakeOk ? "ok" : "warn"}>
-                {handshakeOk
-                  ? `protocol v${bridge.protocolVersion} handshake OK`
-                  : "protocol handshake not confirmed"}
-              </p>
-              <dl>
-                <dt>app</dt>
-                <dd>
-                  {info.state === "ok"
-                    ? `${info.data.name} ${info.data.version}`
-                    : info.state === "error"
-                      ? describe(info.error)
-                      : "…"}
-                </dd>
-                <dt>electron</dt>
-                <dd>{info.state === "ok" ? info.data.electron : "…"}</dd>
-                <dt>chromium</dt>
-                <dd>{info.state === "ok" ? info.data.chrome : "…"}</dd>
-                <dt>node</dt>
-                <dd>{info.state === "ok" ? info.data.node : "…"}</dd>
-                <dt>platform</dt>
-                <dd>{info.state === "ok" ? `${info.data.platform}/${info.data.arch}` : "…"}</dd>
-                <dt>packaged</dt>
-                <dd>{info.state === "ok" ? String(info.data.isPackaged) : "…"}</dd>
-              </dl>
-            </>
+      <main className="chat">
+        <div className="transcript" ref={scroll.ref} onScroll={scroll.onScroll}>
+          <MessageList messages={messages} />
+          {history.loading && <p className="muted">Restoring…</p>}
+          {restoreBanner(history.error)}
+          {turnError !== null && (
+            <ErrorBanner
+              error={turnError}
+              retryText={retryText}
+              onRetry={(text) => void send(text)}
+            />
           )}
-        </section>
+        </div>
 
-        <section className="card">
-          <h2>Local database</h2>
-          {health.state === "loading" && <p className="muted">opening…</p>}
-          {health.state === "error" && <p className="bad">{describe(health.error)}</p>}
-          {health.state === "ok" && (
-            <dl>
-              <dt>schema</dt>
-              <dd>v{health.data.schemaVersion}</dd>
-              <dt>FTS5</dt>
-              <dd className={health.data.fts5 ? "ok" : "bad"}>
-                {health.data.fts5 ? "available" : "missing"}
-              </dd>
-              <dt>threads</dt>
-              <dd>{health.data.threads}</dd>
-              <dt>messages</dt>
-              <dd>{health.data.messages}</dd>
-            </dl>
-          )}
-        </section>
-
-        <section className="card">
-          <h2>Round trip</h2>
-          <button type="button" className="btn" onClick={() => void ping()} disabled={!bridge}>
-            Send ping
-          </button>
-          {pings.length === 0 ? (
-            <p className="muted">No calls yet.</p>
-          ) : (
-            <ul className="pings">
-              {pings.map((p) => (
-                <li key={p.nonce}>
-                  <span className="mono">{p.nonce.slice(0, 8)}</span>
-                  <span className="muted"> seq {p.seq}</span>
-                  <span className="muted"> · {new Date(p.at).toLocaleTimeString()}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
+        <Composer
+          streaming={streaming !== null}
+          disabled={preloadMissing}
+          model={model}
+          onModelChange={setModel}
+          onSend={(text) => void send(text)}
+          onStop={() => void stop()}
+        />
       </main>
 
-      <footer>
-        <span>renderer is sandboxed · contextIsolation on · no node integration</span>
-      </footer>
+      <Diagnostics />
     </div>
   );
 }

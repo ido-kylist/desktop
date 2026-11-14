@@ -126,6 +126,39 @@ export const contracts = {
     request: z.object({ generationId: z.uuid() }),
     response: z.object({ stopped: z.boolean() }),
   },
+
+  /**
+   * The read side of a conversation: what makes "quit and relaunch restores the
+   * thread" (gate G1) possible. One thread, its messages, oldest first.
+   *
+   * Deliberately the whole thread and nothing else — no pagination, no search, no
+   * thread list. Those belong to the sidebar slice, and a narrow contract is the
+   * cheapest way to keep this one honest.
+   *
+   * `generationId` and `errorCode` are carried per message so a restored thread
+   * can tell a failed turn from an interrupted one without re-reading a stream.
+   */
+  "chat.thread": {
+    request: z.object({ threadId: z.uuid() }),
+    response: z.object({
+      thread: z.object({
+        id: z.uuid(),
+        title: z.string(),
+        updatedAt: z.iso.datetime(),
+      }),
+      messages: z.array(
+        z.object({
+          id: z.uuid(),
+          /** Mirrors the database column exactly; the UI only renders user/assistant. */
+          role: z.enum(["user", "assistant", "system", "tool"]),
+          text: z.string(),
+          createdAt: z.iso.datetime(),
+          generationId: z.uuid().nullable(),
+          errorCode: ErrorCodeSchema.nullable(),
+        }),
+      ),
+    }),
+  },
 } as const satisfies Record<ChannelName, Contract>;
 
 export type Contracts = typeof contracts;

@@ -1,3 +1,4 @@
+import { mkdirSync } from "node:fs";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { join, normalize, sep } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -5,12 +6,15 @@ import {
   CHANNELS,
   type ChannelName,
   contracts,
+  type ErrorCode,
+  ErrorCodeSchema,
   GENERATION_EVENT_CHANNEL,
   type IpcResult,
   PROTOCOL_VERSION,
   type RequestOf,
   type ResponseOf,
 } from "@shared/ipc-contract";
+import { eq } from "drizzle-orm";
 import {
   app,
   BrowserWindow,
@@ -27,6 +31,8 @@ import { resolveBaseUrl } from "./api/client.js";
 import { GenerationService } from "./api/generations.js";
 import { createDb, type DrizzleDb } from "./db/client.js";
 import { countRows, defaultDbPath, hasFts5, openDatabase, schemaVersion } from "./db/index.js";
+import { getThreadWithMessages } from "./db/repo.js";
+import { generations as generationRows } from "./db/schema.js";
 import { AppError, toIpcError } from "./errors.js";
 import { type SecretBackend, type SecretStore, SecretsService } from "./secrets.js";
 
@@ -45,6 +51,21 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 app.enableSandbox();
+
+/**
+ * Test hook: an isolated user-data directory.
+ *
+ * The e2e needs its own SQLite file and its own Chromium storage, and the
+ * relaunch leg of gate G1 needs the *same* one twice. Chromium derives its storage
+ * paths from `userData` during startup, so this has to run before `ready`, and
+ * `setPath` throws on a directory that does not exist — hence the mkdir rather
+ * than an assumption. Unset in normal runs, where the platform default applies.
+ */
+const userDataOverride = process.env.CLEON_USER_DATA?.trim() ?? "";
+if (userDataOverride !== "") {
+  mkdirSync(userDataOverride, { recursive: true });
+  app.setPath("userData", userDataOverride);
+}
 
 type Handler<C extends ChannelName> = (
   payload: RequestOf<C>,
@@ -143,6 +164,64 @@ function getGenerations(): GenerationService {
 }
 
 /**
+ * The restore read (gate G1): one thread and its messages, oldest first.
+ *
+ * `messages` carries no generation column — the link is `generations.message_id` —
+ * but the renderer needs both the generation and its error code to render a turn it
+ * did not watch. One extra read for the whole thread, keyed by message id, is
+ * cheaper than a query per message.
+ *
+ * A stored `error_code` that is not in the contract's closed set is reported as
+ * null rather than passed through: the type is the boundary, and a database written
+ * by a newer build must not crash an older renderer.
+ */
+function readThread(threadId: string): ResponseOf<"chat.thread"> {
+  const found = getThreadWithMessages(getOrm(), threadId);
+  if (found === null) {
+    throw new AppError("NOT_FOUND", "thread not found", { details: { threadId } });
+  }
+
+  const rows = getOrm()
+    .select({
+      messageId: generationRows.messageId,
+      generationId: generationRows.id,
+      errorCode: generationRows.errorCode,
+    })
+    .from(generationRows)
+    .where(eq(generationRows.threadId, threadId))
+    .all();
+
+  const byMessage = new Map<string, { generationId: string; errorCode: ErrorCode | null }>();
+  for (const row of rows) {
+    if (row.messageId === null) continue;
+    const parsed = row.errorCode === null ? null : ErrorCodeSchema.safeParse(row.errorCode);
+    byMessage.set(row.messageId, {
+      generationId: row.generationId,
+      errorCode: parsed?.success === true ? parsed.data : null,
+    });
+  }
+
+  return {
+    thread: {
+      id: found.thread.id,
+      title: found.thread.title,
+      updatedAt: found.thread.updatedAt,
+    },
+    messages: found.messages.map((message) => {
+      const generation = byMessage.get(message.id);
+      return {
+        id: message.id,
+        role: message.role,
+        text: message.text,
+        createdAt: message.createdAt,
+        generationId: generation?.generationId ?? null,
+        errorCode: generation?.errorCode ?? null,
+      };
+    }),
+  };
+}
+
+/**
  * The whole privilege surface. The renderer can only reach what is listed here,
  * and every handler returns a result envelope rather than throwing.
  */
@@ -203,6 +282,8 @@ const handlers: { [C in ChannelName]: Handler<C> } = {
   },
 
   "chat.stop": ({ generationId }) => getGenerations().stop(generationId),
+
+  "chat.thread": ({ threadId }) => readThread(threadId),
 };
 
 export function registerIpc(): void {
