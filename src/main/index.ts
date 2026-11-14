@@ -4,6 +4,7 @@ import {
   CHANNELS,
   type ChannelName,
   contracts,
+  countWords,
   type IpcResult,
   PROTOCOL_VERSION,
   type RequestOf,
@@ -74,6 +75,10 @@ const handlers: { [C in ChannelName]: Handler<C> } = {
       messages: countRows(conn, "messages"),
     };
   },
+
+  // The dispatcher above already rejects a malformed payload with BAD_REQUEST,
+  // so this handler only ever sees a validated `{ text: string }`.
+  "scratch.wordCount": ({ text }) => countWords(text),
 };
 
 export function registerIpc(): void {

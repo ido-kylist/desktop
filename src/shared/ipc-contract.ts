@@ -56,6 +56,26 @@ export type IpcResult<T> = { ok: true; data: T } | { ok: false; error: IpcError 
 
 type Contract = { request: z.ZodTypeAny; response: z.ZodTypeAny };
 
+/**
+ * D0.5 rehearsal channel. Words are runs of non-whitespace; `characters` is the
+ * raw string length, so it counts UTF-16 code units rather than code points.
+ */
+export const WordCountRequestSchema = z.object({ text: z.string() });
+export const WordCountResponseSchema = z.object({
+  words: z.number().int().nonnegative(),
+  characters: z.number().int().nonnegative(),
+});
+export type WordCount = z.infer<typeof WordCountResponseSchema>;
+
+/**
+ * The counting function itself, defined once next to the channel it serves so
+ * main and the unit tests share one implementation. It lives in the contract
+ * module rather than `main/` because it must be importable without Electron.
+ */
+export function countWords(text: string): WordCount {
+  return { words: text.match(/\S+/g)?.length ?? 0, characters: text.length };
+}
+
 export const contracts = {
   "app.info": {
     request: z.object({}),
@@ -85,6 +105,10 @@ export const contracts = {
       threads: z.number().int().nonnegative(),
       messages: z.number().int().nonnegative(),
     }),
+  },
+  "scratch.wordCount": {
+    request: WordCountRequestSchema,
+    response: WordCountResponseSchema,
   },
 } as const satisfies Record<ChannelName, Contract>;
 
