@@ -58,3 +58,17 @@ unchanged inside Electron 45. Verified, not assumed: the e2e test asserts the ap
 There is no Developer ID certificate on this machine. The DMG is built with
 `identity: null` and the README documents the `xattr -dr com.apple.quarantine` step.
 Faking a signature was never an option.
+
+## D0 — branch protection is not available on this repo's plan
+
+Both `PUT /branches/main/protection` and `POST /rulesets` return **403: "Upgrade to
+GitHub Pro or make this repository public"**. A private repository on the free plan
+cannot require status checks before merge.
+
+**Consequence.** G0's "branch protection requiring CI" clause is **not met**, and this is
+recorded rather than papered over. CI still runs on every push and PR, and it is the
+gate in practice — but it is not *enforced* by the platform.
+
+**Options, for the owner to choose:** make the repo public, upgrade to Pro, or accept
+unenforced CI until D11.
+
