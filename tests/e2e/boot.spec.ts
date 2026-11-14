@@ -14,7 +14,7 @@ test("boots, handshakes, reaches sqlite", async () => {
     await expect(win).toHaveTitle("Cleon");
 
     // Bridge present + protocol versions agree.
-    await expect(win.getByText(/protocol v1 handshake OK/)).toBeVisible({ timeout: 20_000 });
+    await expect(win.getByText(/protocol v2 handshake OK/)).toBeVisible({ timeout: 20_000 });
 
     // Main reached SQLite and applied schema v1 with the FTS5 virtual table.
     await expect(win.getByText("available")).toBeVisible({ timeout: 20_000 });

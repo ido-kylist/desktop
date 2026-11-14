@@ -10,6 +10,7 @@ declare global {
 type Info = ResponseOf<"app.info">;
 type Health = ResponseOf<"db.health">;
 type Ping = ResponseOf<"app.ping">;
+type WordCount = ResponseOf<"scratch.wordCount">;
 
 type Probe<T> =
   | { state: "loading" }
@@ -29,6 +30,8 @@ export function App(): React.JSX.Element {
   const [info, setInfo] = useState<Probe<Info>>({ state: "loading" });
   const [health, setHealth] = useState<Probe<Health>>({ state: "loading" });
   const [pings, setPings] = useState<Ping[]>([]);
+  const [scratchText, setScratchText] = useState("");
+  const [scratch, setScratch] = useState<Probe<WordCount> | null>(null);
 
   const bridge = typeof window !== "undefined" ? window.cleon : undefined;
 
@@ -49,6 +52,12 @@ export function App(): React.JSX.Element {
     const res = await bridge.invoke("app.ping", { nonce: crypto.randomUUID() });
     if (res.ok) setPings((prev) => [res.data, ...prev].slice(0, 5));
   }, [bridge]);
+
+  const countScratch = useCallback(async () => {
+    if (!bridge) return;
+    const res = await bridge.invoke("scratch.wordCount", { text: scratchText });
+    setScratch(res.ok ? { state: "ok", data: res.data } : { state: "error", error: res.error });
+  }, [bridge, scratchText]);
 
   const handshakeOk =
     bridge !== undefined &&
@@ -135,6 +144,39 @@ export function App(): React.JSX.Element {
                 </li>
               ))}
             </ul>
+          )}
+        </section>
+
+        <section className="card">
+          <h2>Word count</h2>
+          <div>
+            <textarea
+              aria-label="Text to count"
+              data-testid="word-count-input"
+              rows={4}
+              placeholder="Type or paste text"
+              value={scratchText}
+              onChange={(event) => setScratchText(event.target.value)}
+            />
+          </div>
+          <button
+            type="button"
+            className="btn"
+            onClick={() => void countScratch()}
+            disabled={!bridge}
+          >
+            Count words
+          </button>
+          {scratch === null && <p className="muted">Nothing counted yet.</p>}
+          {scratch?.state === "ok" && (
+            <p data-testid="word-count-result">
+              {scratch.data.words} words · {scratch.data.characters} characters
+            </p>
+          )}
+          {scratch?.state === "error" && (
+            <p className="bad" data-testid="word-count-error">
+              {describe(scratch.error)}
+            </p>
           )}
         </section>
       </main>
