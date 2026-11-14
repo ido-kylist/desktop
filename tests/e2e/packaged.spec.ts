@@ -24,7 +24,14 @@ test("installed bundle boots, handshakes and reaches sqlite", async () => {
   try {
     const win = await app.firstWindow();
     await expect(win).toHaveTitle("Cleon");
-    await expect(win.getByText(/protocol v1 handshake OK/)).toBeVisible({ timeout: 25_000 });
+    const protocol = await win.evaluate(
+      () =>
+        (globalThis as unknown as { cleon: { readonly protocolVersion: number } }).cleon
+          .protocolVersion,
+    );
+    await expect(win.getByText(`protocol v${protocol} handshake OK`)).toBeVisible({
+      timeout: 25_000,
+    });
     await expect(win.getByText("packaged")).toBeVisible();
     await expect(win.getByText("available")).toBeVisible({ timeout: 20_000 });
 
