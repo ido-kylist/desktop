@@ -1,0 +1,13 @@
+data: {"id":"gen_text","object":"chat.completion.chunk","model":"mock/text","choices":[{"index":0,"delta":{"role":"assistant"}}]}
+
+data: {"id":"gen_text","object":"chat.completion.chunk","model":"mock/text","choices":[{"index":0,"delta":{"content":"Hello"}}]}
+
+data: {"id":"gen_text","object":"chat.completion.chunk","model":"mock/text","choices":[{"index":0,"delta":{"content":" from"}}]}
+
+data: {"id":"gen_text","object":"chat.completion.chunk","model":"mock/text","choices":[{"index":0,"delta":{"content":" the"}}]}
+
+data: {"id":"gen_text","object":"chat.completion.chunk","model":"mock/text","choices":[{"index":0,"delta":{"content":" mock."}}]}
+
+data: {"id":"gen_text","object":"chat.completion.chunk","model":"mock/text","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":12,"completion_tokens":6}}
+
+data: [DONE]

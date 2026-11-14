@@ -1,0 +1,160 @@
+/**
+ * The single source of truth for every main <-> renderer channel.
+ *
+ * Both sides import this file. Nothing else may declare a channel name.
+ * Adding a channel is a contract change and requires a protocol version bump.
+ *
+ * Invariants this file enforces:
+ *  - every request and response is parsed with Zod at the boundary
+ *  - the renderer never learns a table name, a query, or a credential
+ *  - errors are a closed set, so the UI can render every failure honestly
+ *  - the channel list is imported from `channels.ts`, which carries no zod, so the
+ *    sandboxed preload can validate names without pulling a bundler-invisible dep
+ */
+
+import { z } from "zod";
+import { CHANNEL_NAMES, type ChannelName } from "./channels";
+
+export * from "./channels";
+
+/* ------------------------------------------------------------------ errors */
+
+export const ErrorCodeSchema = z.enum([
+  "BAD_REQUEST",
+  "UNKNOWN_CHANNEL",
+  "PROTOCOL_MISMATCH",
+  "UNAUTHORIZED",
+  "NOT_FOUND",
+  "CONFLICT",
+  "RATE_LIMITED",
+  "BUDGET_EXCEEDED",
+  "UPSTREAM_ERROR",
+  "UPSTREAM_TRUNCATED",
+  "INTERNAL",
+]);
+export type ErrorCode = z.infer<typeof ErrorCodeSchema>;
+
+export const IpcErrorSchema = z.object({
+  code: ErrorCodeSchema,
+  message: z.string(),
+  /** Present for RATE_LIMITED and BUDGET_EXCEEDED so the UI can count down. */
+  retryAfterMs: z.number().int().nonnegative().optional(),
+  details: z.record(z.string(), z.unknown()).optional(),
+});
+export type IpcError = z.infer<typeof IpcErrorSchema>;
+
+/** Every handler returns this shape. There is no throwing across the boundary. */
+export const ipcResultSchema = <T extends z.ZodTypeAny>(data: T) =>
+  z.discriminatedUnion("ok", [
+    z.object({ ok: z.literal(true), data }),
+    z.object({ ok: z.literal(false), error: IpcErrorSchema }),
+  ]);
+
+export type IpcResult<T> = { ok: true; data: T } | { ok: false; error: IpcError };
+
+/* ---------------------------------------------------------------- channels */
+
+type Contract = { request: z.ZodTypeAny; response: z.ZodTypeAny };
+
+export const contracts = {
+  "app.info": {
+    request: z.object({}),
+    response: z.object({
+      name: z.string(),
+      version: z.string(),
+      electron: z.string(),
+      chrome: z.string(),
+      node: z.string(),
+      platform: z.string(),
+      arch: z.string(),
+      protocolVersion: z.number().int().positive(),
+      isPackaged: z.boolean(),
+      startedAt: z.iso.datetime(),
+    }),
+  },
+  "app.ping": {
+    request: z.object({ nonce: z.string().min(1) }),
+    response: z.object({ nonce: z.string(), at: z.iso.datetime(), seq: z.number().int() }),
+  },
+  "db.health": {
+    request: z.object({}),
+    response: z.object({
+      ok: z.boolean(),
+      schemaVersion: z.number().int().nonnegative(),
+      fts5: z.boolean(),
+      threads: z.number().int().nonnegative(),
+      messages: z.number().int().nonnegative(),
+    }),
+  },
+} as const satisfies Record<ChannelName, Contract>;
+
+export type Contracts = typeof contracts;
+export type RequestOf<C extends ChannelName> = z.infer<Contracts[C]["request"]>;
+export type ResponseOf<C extends ChannelName> = z.infer<Contracts[C]["response"]>;
+
+/** Every channel, as a value — derived from the same tuple the preload uses. */
+export const CHANNELS = CHANNEL_NAMES;
+
+/* ------------------------------------------------------- generation stream */
+
+/**
+ * The typed event stream (plan invariant 5). Monotonic `seq` per generation,
+ * stable `generationId` across a retry, applied idempotently by the renderer.
+ */
+const seq = z.number().int().nonnegative();
+
+export const GenerationEventSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("started"),
+    generationId: z.uuid(),
+    threadId: z.uuid(),
+    messageId: z.uuid(),
+    seq,
+    at: z.iso.datetime(),
+  }),
+  z.object({ type: z.literal("delta"), generationId: z.uuid(), seq, text: z.string() }),
+  z.object({ type: z.literal("reasoning"), generationId: z.uuid(), seq, text: z.string() }),
+  z.object({
+    type: z.literal("toolCall"),
+    generationId: z.uuid(),
+    seq,
+    callId: z.string(),
+    name: z.string(),
+    args: z.unknown(),
+  }),
+  z.object({
+    type: z.literal("toolResult"),
+    generationId: z.uuid(),
+    seq,
+    callId: z.string(),
+    ok: z.boolean(),
+    result: z.unknown(),
+  }),
+  z.object({
+    type: z.literal("usage"),
+    generationId: z.uuid(),
+    seq,
+    promptTokens: z.number().int().nonnegative(),
+    completionTokens: z.number().int().nonnegative(),
+    costMicrocents: z.number().int().nonnegative(),
+  }),
+  z.object({
+    type: z.literal("done"),
+    generationId: z.uuid(),
+    seq,
+    finishReason: z.enum(["stop", "length", "tool_calls", "content_filter", "error"]),
+  }),
+  z.object({ type: z.literal("error"), generationId: z.uuid(), seq, error: IpcErrorSchema }),
+]);
+export type GenerationEvent = z.infer<typeof GenerationEventSchema>;
+
+/* ------------------------------------------------------------- renderer API */
+
+/** The shape `contextBridge` exposes as `window.cleon`. Nothing else is exposed. */
+export interface CleonApi {
+  readonly protocolVersion: number;
+  invoke<C extends ChannelName>(
+    channel: C,
+    payload: RequestOf<C>,
+  ): Promise<IpcResult<ResponseOf<C>>>;
+}

@@ -1,0 +1,11 @@
+data: {"id":"gen_reason","object":"chat.completion.chunk","model":"mock/reasoning","choices":[{"index":0,"delta":{"role":"assistant"}}]}
+
+data: {"id":"gen_reason","object":"chat.completion.chunk","model":"mock/reasoning","choices":[{"index":0,"delta":{"reasoning_content":"The user wants the"}}]}
+
+data: {"id":"gen_reason","object":"chat.completion.chunk","model":"mock/reasoning","choices":[{"index":0,"delta":{"reasoning_content":" short answer."}}]}
+
+data: {"id":"gen_reason","object":"chat.completion.chunk","model":"mock/reasoning","choices":[{"index":0,"delta":{"content":"Four."}}]}
+
+data: {"id":"gen_reason","object":"chat.completion.chunk","model":"mock/reasoning","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":20,"completion_tokens":9}}
+
+data: [DONE]

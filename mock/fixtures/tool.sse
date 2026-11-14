@@ -1,0 +1,13 @@
+data: {"id":"gen_tool","object":"chat.completion.chunk","model":"mock/tool","choices":[{"index":0,"delta":{"role":"assistant"}}]}
+
+data: {"id":"gen_tool","object":"chat.completion.chunk","model":"mock/tool","choices":[{"index":0,"delta":{"content":"Checking the weather."}}]}
+
+data: {"id":"gen_tool","object":"chat.completion.chunk","model":"mock/tool","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"get_weather","arguments":""}}]}}]}
+
+data: {"id":"gen_tool","object":"chat.completion.chunk","model":"mock/tool","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"city\":"}}]}}]}
+
+data: {"id":"gen_tool","object":"chat.completion.chunk","model":"mock/tool","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"Lisbon\"}"}}]}}]}
+
+data: {"id":"gen_tool","object":"chat.completion.chunk","model":"mock/tool","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":40,"completion_tokens":18}}
+
+data: [DONE]

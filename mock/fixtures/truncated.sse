@@ -1,0 +1,4 @@
+data: {"id":"gen_trunc","object":"chat.completion.chunk","model":"mock/truncated","choices":[{"index":0,"delta":{"role":"assistant"}}]}
+
+data: {"id":"gen_trunc","object":"chat.completion.chunk","model":"mock/truncated","choices":[{"index":0,"delta":{"content":"This stream stops mid-"}}]}
+
