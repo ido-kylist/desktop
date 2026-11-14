@@ -10,7 +10,11 @@ permissions:
 
 jobs:
   release:
-    runs-on: macos-14
+    # macos-latest, not macos-14: on this private repo the arm64 runner label
+    # resolves to an unsupported configuration and the job is cancelled in
+    # seconds (observed on the first CI run). The DMG is cross-built for arm64,
+    # which is the conventional path when an arm64 runner is unavailable.
+    runs-on: macos-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -27,6 +31,9 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       - name: Build and publish DMG
+        # arm64 cross-build: electron-builder rebuilds better-sqlite3 for the
+        # target arch. CI verifies host-arch packaging on every push; this job
+        # produces the shippable Apple Silicon DMG on a tag.
         run: pnpm exec electron-vite build && pnpm exec electron-builder --mac --arm64 --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
