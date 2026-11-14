@@ -90,4 +90,35 @@ cannot push to `main` directly.
 Also enabled, because the repo is public and the product will handle API keys: secret
 scanning and **push protection**, so a credential cannot be committed at all.
 
+## D1 — protocol v3, and why the read channel exists
+
+`chat.thread` was added for one reason: G1 requires "relaunch restores", which needs a read
+path the renderer can call. It returns a thread and its messages and nothing else — no
+pagination, no search. D2 owns those, and a narrower contract now is cheaper than widening one
+later. Protocol went 2 → 3 for this single channel; versions stay monotonic.
+
+## D1 — markdown is hand-rolled, deliberately
+
+The plan pins streamdown, but adding a dependency requires a decision entry and this slice had
+no room to evaluate a renderer. The subset implemented — fenced code, inline code, bold,
+italic, links, lists, paragraphs — is built as React elements, with **no**
+`dangerouslySetInnerHTML` anywhere in the renderer. An XSS payload
+(`<img src=x onerror=alert(1)>`) is unit-tested to render as escaped text.
+Replacing it with a real parser is in `BACKLOG.md`.
+
+## D1 — "retry" is a new turn, not a regeneration
+
+The frozen contract has `chat.send` and `chat.stop`; it has no regenerate primitive. So retry
+literally re-sends the same user text, which persists a second user message. That duplication
+is the honest consequence of not having the primitive, and it is recorded rather than hidden
+behind a UI that pretends to edit history. A `chat.regenerate` channel belongs with D3's
+branch tree, where variants already exist.
+
+## D1 — `CLEON_USER_DATA` exists for tests
+
+`app.setPath("userData", ...)` when the env var is set. Without it, an e2e that proves
+"relaunch restores" would either pollute the developer's real database or require deleting it.
+A test hook that changes where data lives is preferable to tests that pretend to be isolated.
+
+
 
