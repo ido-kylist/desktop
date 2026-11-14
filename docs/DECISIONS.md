@@ -59,16 +59,35 @@ There is no Developer ID certificate on this machine. The DMG is built with
 `identity: null` and the README documents the `xattr -dr com.apple.quarantine` step.
 Faking a signature was never an option.
 
-## D0 — branch protection is not available on this repo's plan
+## D0 — branch protection (resolved)
 
-Both `PUT /branches/main/protection` and `POST /rulesets` return **403: "Upgrade to
-GitHub Pro or make this repository public"**. A private repository on the free plan
-cannot require status checks before merge.
+The repo was private on the free plan, where both `PUT /branches/main/protection` and
+`POST /rulesets` return **403**. The owner made the repository public, which unblocked it.
 
-**Consequence.** G0's "branch protection requiring CI" clause is **not met**, and this is
-recorded rather than papered over. CI still runs on every push and PR, and it is the
-gate in practice — but it is not *enforced* by the platform.
+Applied and verified:
 
-**Options, for the owner to choose:** make the repo public, upgrade to Pro, or accept
-unenforced CI until D11.
+| Setting | Value |
+|---|---|
+| Required status check | `typecheck · lint · build · test · e2e` (strict) |
+| Enforce for admins | **true** — the owner cannot bypass either |
+| Force pushes | blocked |
+| Branch deletion | blocked |
+| Conversation resolution | required before merge |
+| Collaborators with push | `ido-kylist` only |
+
+**Proof, not configuration:** a direct `git push origin HEAD:main` was attempted and
+rejected by the remote —
+
+```
+remote: error: GH006: Protected branch update failed for refs/heads/main.
+remote: - Required status check "typecheck · lint · build · test · e2e" is expected.
+```
+
+A public repository means anyone may *read* and *fork* it; it does not mean anyone may
+*write* to it. Write access is the single collaborator above, and even that collaborator
+cannot push to `main` directly.
+
+Also enabled, because the repo is public and the product will handle API keys: secret
+scanning and **push protection**, so a credential cannot be committed at all.
+
 
