@@ -10,11 +10,31 @@
  * every channel listed here has a schema. Adding a name without a schema is a
  * compile error, so the two halves cannot drift.
  */
-export const PROTOCOL_VERSION = 1 as const;
+export const PROTOCOL_VERSION = 2 as const;
 
-export const CHANNEL_NAMES = ["app.info", "app.ping", "db.health"] as const;
+export const CHANNEL_NAMES = [
+  "app.info",
+  "app.ping",
+  "db.health",
+  "secrets.status",
+  "secrets.setKey",
+  "secrets.clearKey",
+  "chat.send",
+  "chat.stop",
+] as const;
 
 export type ChannelName = (typeof CHANNEL_NAMES)[number];
+
+/**
+ * The one main -> renderer push channel.
+ *
+ * It is deliberately not an entry in `CHANNEL_NAMES`: that tuple is the request/
+ * response surface, and every member needs both halves of a schema. Generation
+ * events are unsolicited and already fully described by `GenerationEventSchema`
+ * in the contract module, so the name lives here — where the preload can read it
+ * without pulling zod into the sandbox bridge.
+ */
+export const GENERATION_EVENT_CHANNEL = "generation:event" as const;
 
 export function isChannelName(value: unknown): value is ChannelName {
   return typeof value === "string" && (CHANNEL_NAMES as readonly string[]).includes(value);

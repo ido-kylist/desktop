@@ -86,6 +86,46 @@ export const contracts = {
       messages: z.number().int().nonnegative(),
     }),
   },
+
+  /**
+   * The key is write-only across this boundary: it goes in, and the only thing
+   * that ever comes back is whether one exists and a masked tail (invariant 2).
+   */
+  "secrets.status": {
+    request: z.object({}),
+    response: z.object({ hasKey: z.boolean(), masked: z.string().nullable() }),
+  },
+  "secrets.setKey": {
+    request: z.object({ key: z.string().min(1) }),
+    response: z.object({ hasKey: z.boolean(), masked: z.string().nullable() }),
+  },
+  "secrets.clearKey": {
+    request: z.object({}),
+    response: z.object({ hasKey: z.literal(false) }),
+  },
+
+  /**
+   * Returns as soon as the turn is persisted; the answer itself arrives on
+   * `generation:event`. `threadId: null` starts a new thread, and the response
+   * carries the id it was given.
+   */
+  "chat.send": {
+    request: z.object({
+      threadId: z.uuid().nullable(),
+      text: z.string().min(1),
+      model: z.string().min(1),
+    }),
+    response: z.object({
+      threadId: z.uuid(),
+      userMessageId: z.uuid(),
+      assistantMessageId: z.uuid(),
+      generationId: z.uuid(),
+    }),
+  },
+  "chat.stop": {
+    request: z.object({ generationId: z.uuid() }),
+    response: z.object({ stopped: z.boolean() }),
+  },
 } as const satisfies Record<ChannelName, Contract>;
 
 export type Contracts = typeof contracts;
@@ -157,4 +197,10 @@ export interface CleonApi {
     channel: C,
     payload: RequestOf<C>,
   ): Promise<IpcResult<ResponseOf<C>>>;
+  /**
+   * Subscribes to the generation stream (invariant 5). Returns an unsubscribe
+   * function. Events for every generation share this channel; filter on
+   * `generationId`, and apply them idempotently by `seq`.
+   */
+  onGenerationEvent(listener: (event: GenerationEvent) => void): () => void;
 }

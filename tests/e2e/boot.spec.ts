@@ -13,8 +13,16 @@ test("boots, handshakes, reaches sqlite", async () => {
     const win = await app.firstWindow();
     await expect(win).toHaveTitle("Cleon");
 
-    // Bridge present + protocol versions agree.
-    await expect(win.getByText(/protocol v1 handshake OK/)).toBeVisible({ timeout: 20_000 });
+    // Bridge present + protocol versions agree. The number is read from the
+    // bridge rather than written here, so a version bump is not an e2e edit.
+    const protocol = await win.evaluate(
+      () =>
+        (globalThis as unknown as { cleon: { readonly protocolVersion: number } }).cleon
+          .protocolVersion,
+    );
+    await expect(win.getByText(`protocol v${protocol} handshake OK`)).toBeVisible({
+      timeout: 20_000,
+    });
 
     // Main reached SQLite and applied schema v1 with the FTS5 virtual table.
     await expect(win.getByText("available")).toBeVisible({ timeout: 20_000 });
