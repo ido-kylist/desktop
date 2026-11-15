@@ -24,9 +24,25 @@ test("boots, handshakes, reaches sqlite", async () => {
       timeout: 20_000,
     });
 
-    // Main reached SQLite and applied schema v1 with the FTS5 virtual table.
+    // Main reached SQLite with the FTS5 virtual table. The schema version is read
+    // from the bridge rather than hardcoded: migrations land over time, and a
+    // literal here turns every migration into an unrelated test failure.
     await expect(win.getByText("available")).toBeVisible({ timeout: 20_000 });
-    await expect(win.getByText("v1", { exact: true })).toBeVisible();
+    const schemaVersion = await win.evaluate(async () => {
+      const res = await (
+        globalThis as unknown as {
+          cleon: {
+            invoke: (
+              c: string,
+              p: object,
+            ) => Promise<{ ok: boolean; data?: { schemaVersion: number } }>;
+          };
+        }
+      ).cleon.invoke("db.health", {});
+      return res.ok ? res.data?.schemaVersion : -1;
+    });
+    expect(schemaVersion).toBeGreaterThanOrEqual(2);
+    await expect(win.getByText(`v${schemaVersion}`, { exact: true })).toBeVisible();
 
     // A real IPC round trip, not just a static render.
     await win.getByRole("button", { name: "Send ping" }).click();
