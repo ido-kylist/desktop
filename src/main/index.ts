@@ -28,12 +28,16 @@ import {
 import { GenerationBus } from "./api/bus.js";
 import { resolveBaseUrl } from "./api/client.js";
 import { GenerationService, type GenerationSink } from "./api/generations.js";
+import { listModels } from "./api/models.js";
 import { createDb, type DrizzleDb } from "./db/client.js";
 import { countRows, defaultDbPath, hasFts5, openDatabase, schemaVersion } from "./db/index.js";
 import {
+  getSettings,
   getThreadTree,
   listThreads,
+  type StoredSettings,
   setActiveVariant,
+  setSettings,
   softDeleteThread,
   updateThread,
 } from "./db/repo.js";
@@ -148,10 +152,11 @@ function getSecrets(): SecretsService {
  * The inference service, over the shared connection and Drizzle handle.
  *
  * The API key is read per turn rather than captured once, so replacing it takes
- * effect on the next message instead of the next launch. An unconfigured base URL
- * surfaces from `resolveBaseUrl` inside the turn, where it becomes an error event
- * on a generation that is already persisted — the user's message is not lost to a
- * configuration mistake.
+ * effect on the next message instead of the next launch. The base URL is resolved
+ * per turn for the same reason: a URL typed into Settings has to work without a
+ * relaunch. An unconfigured base URL surfaces from `resolveBaseUrl` inside the turn,
+ * where it becomes an error event on a generation that is already persisted — the
+ * user's message is not lost to a configuration mistake.
  */
 function getGenerations(): GenerationService {
   if (!generations) {
@@ -159,7 +164,11 @@ function getGenerations(): GenerationService {
       db: getOrm(),
       bus: new GenerationBus(),
       resolveConfig: async () => ({
-        baseUrl: resolveBaseUrl({ isPackaged: app.isPackaged, env: process.env }),
+        baseUrl: resolveBaseUrl({
+          isPackaged: app.isPackaged,
+          env: process.env,
+          storedBaseUrl: getSettings(getOrm()).baseUrl,
+        }),
         apiKey: await getSecrets().getApiKey(),
       }),
     });
@@ -222,6 +231,42 @@ function generationSink(sender: IpcMainInvokeEvent["sender"]): GenerationSink {
   return (generationEvent) => {
     if (!sender.isDestroyed()) sender.send(GENERATION_EVENT_CHANNEL, generationEvent);
   };
+}
+
+/**
+ * `settings.get` and `settings.set` answer with the same shape, so both go through
+ * the one place that asks the secret store whether a key exists.
+ *
+ * Only the masked tail crosses the boundary (invariant 2): the settings screen needs
+ * to confirm a key is present, not to read it. An unavailable keychain throws
+ * UNAUTHORIZED rather than reporting `hasKey: false`, because claiming there is no
+ * key when one exists is the kind of lie the user acts on.
+ */
+async function settingsResponse(stored: StoredSettings): Promise<ResponseOf<"settings.get">> {
+  const masked = await getSecrets().masked();
+  return {
+    baseUrl: stored.baseUrl,
+    defaultModel: stored.defaultModel,
+    hasKey: masked !== null,
+    masked,
+  };
+}
+
+/**
+ * The key, when one can be read, for a request that does not require it.
+ *
+ * A catalog read is such a request: the bearer header is attached only when a key
+ * exists, so a locked keychain must not take the model list down with it. The list
+ * goes out unauthenticated and a 401 comes back as an ordinary fallback with a
+ * message, which is a state the settings screen can show.
+ */
+async function readOptionalApiKey(): Promise<string | null> {
+  try {
+    return await getSecrets().getApiKey();
+  } catch (error) {
+    if (error instanceof AppError && error.code === "UNAUTHORIZED") return null;
+    throw error;
+  }
 }
 
 /**
@@ -300,6 +345,40 @@ const handlers: { [C in ChannelName]: Handler<C> } = {
   "threads.delete": ({ threadId }) => {
     softDeleteThread(getOrm(), threadId);
     return { ok: true };
+  },
+
+  /* ------------------------------------------------- P0 provider settings */
+
+  "settings.get": async () => settingsResponse(getSettings(getOrm())),
+
+  /**
+   * The patch is forwarded as it arrived: the contract already makes every field
+   * optional, and "absent" and "null" mean different things (leave it / clear it),
+   * so nothing is defaulted here. The response is the stored state after the write,
+   * not an echo of the request, so a trimmed or cleared value is what the screen
+   * then shows.
+   */
+  "settings.set": async (payload) =>
+    settingsResponse(
+      setSettings(getOrm(), {
+        baseUrl: payload.baseUrl,
+        defaultModel: payload.defaultModel,
+      }),
+    ),
+
+  /**
+   * The catalog for the settings screen. The base URL is resolved here rather than
+   * inside `listModels` so the pure function stays pure, and an unconfigured packaged
+   * build surfaces as an INTERNAL error the screen can render — the alternative, an
+   * empty list, would look like a provider with no models.
+   */
+  "models.list": async () => {
+    const baseUrl = resolveBaseUrl({
+      isPackaged: app.isPackaged,
+      env: process.env,
+      storedBaseUrl: getSettings(getOrm()).baseUrl,
+    });
+    return listModels({ baseUrl, apiKey: await readOptionalApiKey() });
   },
 };
 

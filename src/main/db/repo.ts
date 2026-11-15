@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type { ErrorCode } from "@shared/ipc-contract";
-import { and, asc, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { AppError } from "../errors.js";
 import type { DrizzleDb } from "./client.js";
-import { generations, type Message, messages, type Thread, threads } from "./schema.js";
+import { generations, type Message, messages, settings, type Thread, threads } from "./schema.js";
 
 /**
  * Every SQL statement the inference layer is allowed to make.
@@ -684,4 +684,101 @@ function readGenerations(db: DrizzleDb, threadId: string): Map<string, Generatio
     });
   }
   return byMessage;
+}
+
+/* ------------------------------------------------------- P0: the settings */
+
+/**
+ * The two keys the provider settings screen owns.
+ *
+ * Column names, not TypeScript names, because they are the durable half: a rename
+ * here is a data migration for every user who already saved a URL.
+ */
+const BASE_URL_KEY = "base_url";
+const DEFAULT_MODEL_KEY = "default_model";
+
+export interface StoredSettings {
+  /** Null means "never configured" — the resolver decides what that implies. */
+  baseUrl: string | null;
+  defaultModel: string | null;
+}
+
+/**
+ * Both keys in one read.
+ *
+ * The filter is explicit rather than `SELECT *`: a future setting that belongs to
+ * another screen must not appear in this response, and the contract has no field
+ * to put it in.
+ */
+export function getSettings(db: DrizzleDb): StoredSettings {
+  const rows = db
+    .select({ key: settings.key, value: settings.value })
+    .from(settings)
+    .where(inArray(settings.key, [BASE_URL_KEY, DEFAULT_MODEL_KEY]))
+    .all();
+
+  const byKey = new Map(rows.map((row) => [row.key, row.value]));
+  return {
+    baseUrl: byKey.get(BASE_URL_KEY) ?? null,
+    defaultModel: byKey.get(DEFAULT_MODEL_KEY) ?? null,
+  };
+}
+
+/**
+ * What the caller asked to change. `undefined` means "leave it alone"; `null`
+ * means "clear it" — the two are different requests, and the contract keeps them
+ * distinct by making a *missing* field the only way to say nothing at all.
+ */
+export interface SettingsPatch {
+  baseUrl?: string | null | undefined;
+  defaultModel?: string | null | undefined;
+}
+
+/**
+ * Writes only the keys that were provided.
+ *
+ * One transaction for the whole patch: a settings screen that changes the base URL
+ * and the default model together must not be able to save half of it, and a partial
+ * write is exactly what a crash between two statements leaves behind.
+ *
+ * Upsert, not insert: `ON CONFLICT(key) DO UPDATE` keeps the row count at one per
+ * key whatever the order of edits was, and `updated_at` moves with every write.
+ *
+ * A blank value is a clear rather than a stored empty string — an empty base URL in
+ * the row would read back as "configured" to the settings screen while the resolver
+ * would treat it as unset, and the two would disagree about what the user sees.
+ */
+export function setSettings(db: DrizzleDb, patch: SettingsPatch): StoredSettings {
+  const writes: { key: string; value: string }[] = [];
+  const clears: string[] = [];
+
+  const absorb = (key: string, raw: string | null | undefined): void => {
+    if (raw === undefined) return;
+    const value = raw === null ? "" : raw.trim();
+    if (value === "") clears.push(key);
+    else writes.push({ key, value });
+  };
+
+  absorb(BASE_URL_KEY, patch.baseUrl);
+  absorb(DEFAULT_MODEL_KEY, patch.defaultModel);
+
+  db.transaction((tx) => {
+    if (writes.length > 0) {
+      tx.insert(settings)
+        .values(writes)
+        .onConflictDoUpdate({
+          target: settings.key,
+          // `excluded` is the row this statement wanted to insert, so each key
+          // updates to its own new value in a single round trip.
+          set: { value: sql`excluded."value"`, updatedAt: new Date().toISOString() },
+        })
+        .run();
+    }
+
+    if (clears.length > 0) {
+      tx.delete(settings).where(inArray(settings.key, clears)).run();
+    }
+  });
+
+  return getSettings(db);
 }
