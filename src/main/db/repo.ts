@@ -21,6 +21,10 @@ import { generations, type Message, messages, settings, type Thread, threads } f
 export interface CreateThreadInput {
   id: string;
   title?: string;
+  /** D6: the project the new thread is filed under, if any. */
+  projectId?: string | null;
+  /** D6: the assistant it was first sent with, if any. */
+  assistantId?: string | null;
 }
 
 export function createThread(db: DrizzleDb, input: CreateThreadInput): void {
@@ -28,7 +32,33 @@ export function createThread(db: DrizzleDb, input: CreateThreadInput): void {
     .values({
       id: input.id,
       ...(input.title === undefined ? {} : { title: input.title }),
+      ...(input.projectId === undefined ? {} : { projectId: input.projectId }),
+      ...(input.assistantId === undefined ? {} : { assistantId: input.assistantId }),
     })
+    .run();
+}
+
+/**
+ * Files an existing thread under a project, or records the assistant it was just sent
+ * with. Only the fields provided are written, so setting an assistant cannot silently
+ * move a thread out of its project.
+ *
+ * `updated_at` is deliberately untouched: `chat.send` already touches the thread, and a
+ * second write here would be a second source of the same edit.
+ */
+export function assignThread(
+  db: DrizzleDb,
+  threadId: string,
+  patch: { projectId?: string | null; assistantId?: string | null },
+): void {
+  if (patch.projectId === undefined && patch.assistantId === undefined) return;
+
+  db.update(threads)
+    .set({
+      ...(patch.projectId === undefined ? {} : { projectId: patch.projectId }),
+      ...(patch.assistantId === undefined ? {} : { assistantId: patch.assistantId }),
+    })
+    .where(eq(threads.id, threadId))
     .run();
 }
 
@@ -131,6 +161,12 @@ export interface ThreadWithMessages {
   messages: Message[];
 }
 
+/** One thread row, or null. Cheap enough to call on every turn: it is a primary-key read. */
+export function getThread(db: DrizzleDb, threadId: string): Thread | null {
+  const row = db.select().from(threads).where(eq(threads.id, threadId)).get();
+  return row ?? null;
+}
+
 /**
  * The thread and its live messages, oldest first.
  *
@@ -159,6 +195,8 @@ export function getThreadWithMessages(db: DrizzleDb, threadId: string): ThreadWi
 export interface ListThreadsInput {
   /** FTS5 term; empty or undefined means "everything". */
   query?: string | undefined;
+  /** D6: only threads filed under this project; absent means "every project". */
+  projectId?: string | undefined;
   limit: number;
   offset: number;
   includeArchived: boolean;
@@ -172,6 +210,7 @@ export interface ThreadListItem {
   pinned: boolean;
   archivedAt: string | null;
   messageCount: number;
+  projectId: string | null;
   snippet: string | null;
 }
 
@@ -187,6 +226,7 @@ interface ThreadListRow {
   pinned: number;
   archived_at: string | null;
   message_count: number;
+  project_id: string | null;
   snippet: string | null;
 }
 
@@ -227,6 +267,15 @@ function toFtsMatch(term: string): string {
 export function listThreads(db: DrizzleDb, input: ListThreadsInput): ListThreadsResult {
   const includeArchived = input.includeArchived ? 1 : 0;
   const term = input.query?.trim() ?? "";
+  /**
+   * D6's project filter, as one bound parameter used twice.
+   *
+   * Null means "every project", and the predicate says so in SQL rather than in a
+   * second copy of each query: `(? IS NULL OR t.project_id = ?)` is the same shape for
+   * the plain list, the search branch and both counts, so a filtered sidebar cannot
+   * disagree with its own total.
+   */
+  const projectFilter = input.projectId ?? null;
 
   if (term === "") {
     const items = db
@@ -237,12 +286,14 @@ export function listThreads(db: DrizzleDb, input: ListThreadsInput): ListThreads
           t.updated_at    AS updated_at,
           t.pinned        AS pinned,
           t.archived_at   AS archived_at,
+          t.project_id    AS project_id,
           (SELECT COUNT(*) FROM messages AS mc
             WHERE mc.thread_id = t.id AND mc.deleted_at IS NULL) AS message_count,
           NULL            AS snippet
         FROM threads AS t
         WHERE t.deleted_at IS NULL
           AND (${includeArchived} = 1 OR t.archived_at IS NULL)
+          AND (${projectFilter} IS NULL OR t.project_id = ${projectFilter})
         ORDER BY t.pinned DESC, t.updated_at DESC
         LIMIT ${input.limit} OFFSET ${input.offset}
       `)
@@ -253,6 +304,7 @@ export function listThreads(db: DrizzleDb, input: ListThreadsInput): ListThreads
       FROM threads AS t
       WHERE t.deleted_at IS NULL
         AND (${includeArchived} = 1 OR t.archived_at IS NULL)
+        AND (${projectFilter} IS NULL OR t.project_id = ${projectFilter})
     `);
 
     return { items, total: total?.n ?? 0 };
@@ -275,6 +327,7 @@ export function listThreads(db: DrizzleDb, input: ListThreadsInput): ListThreads
           AND m.deleted_at IS NULL
           AND t.deleted_at IS NULL
           AND (${includeArchived} = 1 OR t.archived_at IS NULL)
+          AND (${projectFilter} IS NULL OR t.project_id = ${projectFilter})
       ),
       best AS (
         SELECT
@@ -290,6 +343,7 @@ export function listThreads(db: DrizzleDb, input: ListThreadsInput): ListThreads
         t.updated_at    AS updated_at,
         t.pinned        AS pinned,
         t.archived_at   AS archived_at,
+        t.project_id    AS project_id,
         (SELECT COUNT(*) FROM messages AS mc
           WHERE mc.thread_id = t.id AND mc.deleted_at IS NULL) AS message_count,
         b.snippet       AS snippet
@@ -311,6 +365,7 @@ export function listThreads(db: DrizzleDb, input: ListThreadsInput): ListThreads
         AND m.deleted_at IS NULL
         AND t.deleted_at IS NULL
         AND (${includeArchived} = 1 OR t.archived_at IS NULL)
+        AND (${projectFilter} IS NULL OR t.project_id = ${projectFilter})
     )
     SELECT COUNT(*) AS n
     FROM (SELECT thread_id FROM hits GROUP BY thread_id)
@@ -328,6 +383,7 @@ function toThreadListItem(row: ThreadListRow): ThreadListItem {
     pinned: row.pinned !== 0,
     archivedAt: row.archived_at,
     messageCount: row.message_count,
+    projectId: row.project_id,
     snippet: row.snippet,
   };
 }

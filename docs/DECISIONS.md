@@ -147,3 +147,73 @@ diagnose — the error taxonomy did its job.
 **Follow-up:** the Settings model field must accept a typed id (not only the catalog select),
 and `models.list` should say that catalog ids may need a deployment prefix on this provider.
 Recorded in `BACKLOG.md`; not a release blocker, because the user can paste the working id.
+
+## D6 — protocol v7, schema v5: projects, assistants, prompts
+
+**What changed.** Eleven channels added (`projects.list/create/update`,
+`assistants.list/create/update/delete`, `prompts.list/create/update/delete`), four existing
+ones widened: `chat.send` gained `assistantId` and `projectId` and **lost its required
+`model`** (an assistant can supply it), `chat.thread` reports the thread's `projectId` and
+`assistantId`, and `threads.list` gained a `projectId` filter plus a per-row `projectId`.
+`PROTOCOL_VERSION` 6 → 7. Migration 5 adds `projects`, `assistants`, `prompts`,
+`threads.assistant_id` and its index.
+
+**No new dependency.** Nothing in this slice needed one: search is `LIKE`, the clock is
+`Date`, and the UI is the components that were already there.
+
+**`threads.project_id` already had its index.** Migration 1 created `threads_project_idx`
+and the Drizzle schema already declared it, so migration 5 adds only the index the new
+column needs (`threads_assistant_idx`). Creating a second index on the same column would
+have been a write cost paid for nothing.
+
+**No foreign keys on `threads.project_id` / `threads.assistant_id`.** Same trade as
+`active_leaf_id`: both are hints for the next turn. A project archived or an assistant
+deleted while a thread still names it must not make the thread unreadable, and SQLite
+cannot add a foreign key to an existing column without a table rebuild.
+
+**`assistants.delete` archives; `prompts.delete` deletes.** A thread carries the id of the
+assistant it was last sent with, so removing the row would leave a dangling pointer and
+regeneration would lose the system prompt. A prompt is text with nothing pointing at it.
+
+**Prompt search is `LIKE`, not FTS5.** The brief allowed either. `LIKE` over
+`lower(title)`/`lower(body)` needs no virtual table and no three triggers, and a prompt
+library is tens of rows, not thousands of messages. Tokens are ANDed, and `%`/`_`/`\` are
+escaped with an explicit `ESCAPE '\'`, so searching for `50%` finds the prompt that says
+"50%" instead of every prompt. Exact is in the test, not in the intent.
+
+**Prompt `{{date}}` and `{{time}}` are UTC.** Everything else this app stores and compares
+is UTC; a formatter that quietly used the machine's zone would expand the same prompt
+differently on two machines, and the unit test could only assert around it. A local-time
+variant needs a timezone setting to be honest, and is in `BACKLOG.md`.
+
+**A variable with no value stays literal.** `{{project_name}}` in a thread with no project
+expands to `{{project_name}}`, not to an empty string. "Never silently blanked" is the rule
+for unknown names; a known name with nothing to say is the same failure mode, and a prompt
+that reads "Project: " is worse than one that shows what it could not fill in.
+
+**A project is assigned at creation, never on send.** `chat.send` reads `projectId` only
+when `threadId` is null. Re-filing an existing conversation on every turn would let the
+sidebar's filter move threads the user never touched. Moving an existing thread needs a
+`threads.update` field and an affordance, and is in `BACKLOG.md` rather than half-built.
+
+**The composer omits `model` when an assistant is picked.** Two authorities for one value
+is a bug waiting for a disagreement: the assistant's model is used, so the model select is
+replaced by a statement of what will be sent. When the assistant's row is not on screen
+yet (loading, or archived), the statement says where the value comes from instead of
+guessing an id.
+
+**The thread count is a `GROUP BY`, not a correlated subquery.** The first version counted
+per project with a subquery in the select, and it silently returned 0 for every project:
+drizzle renders a bare column reference as `"id"`, and inside a subquery over `threads`,
+`"id"` resolves to `threads.id`, so the correlated reference compared a project id with a
+thread id. One grouped aggregate and a merge in main has no such ambiguity and is one scan.
+
+**`{{date}}` is expanded at send time from the injected clock**, through
+`GenerationService`'s existing `clock` dependency. The unit test drives the pure function
+with a `Date`; the integration test freezes the service's clock. Neither mocks a global.
+
+**One existing test had to change, and it is not a weakened gate.**
+`tests/integration/attachments.spec.ts` asserted `MIGRATIONS.at(-1).version === 4`. That
+statement is false by construction once migration 5 exists, and its real claim is
+"migration 4 is applied", so it now asserts `>= 4` and keeps the `attachments` column
+assertion that was the substance of the test.

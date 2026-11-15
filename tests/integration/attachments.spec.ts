@@ -418,7 +418,9 @@ describe("preview", () => {
 describe("the schema this slice relies on", () => {
   it("has migration 4 applied and an attachments table with the columns the repo uses", () => {
     const latest = MIGRATIONS.at(-1)?.version;
-    expect(latest).toBe(4);
+    // Not an equality: D6's migration 5 is applied after this one, and the claim this
+    // test makes is "migration 4 is applied", not "nothing has been added since".
+    expect(latest).toBeGreaterThanOrEqual(4);
 
     const columns = conn.prepare("PRAGMA table_info(attachments)").all() as { name: string }[];
     expect(columns.map((column) => column.name).sort()).toEqual([

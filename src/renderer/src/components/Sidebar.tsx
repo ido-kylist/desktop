@@ -9,6 +9,7 @@ import {
   useThreadList,
 } from "../hooks/use-thread-list";
 import { deleteThread, toIpcError, updateThread } from "../lib/ipc";
+import { ProjectSection } from "./ProjectSection";
 import { ThreadList } from "./ThreadList";
 
 /**
@@ -26,11 +27,16 @@ const SEARCH_DEBOUNCE_MS = 250;
 
 export function Sidebar({
   selectedThreadId,
+  selectedProjectId,
+  onSelectProject,
   onSelect,
   onNewChat,
   onDeleted,
 }: {
   selectedThreadId: string | null;
+  /** D6: the project filter, owned by App because a new chat is filed under it too. */
+  selectedProjectId: string | null;
+  onSelectProject: (projectId: string | null) => void;
   onSelect: (threadId: string) => void;
   onNewChat: () => void;
   onDeleted: (threadId: string) => void;
@@ -41,7 +47,7 @@ export function Sidebar({
   const [actionError, setActionError] = useState<IpcError | null>(null);
 
   const query = useDebouncedValue(search.trim(), SEARCH_DEBOUNCE_MS);
-  const list = useThreadList(query, includeArchived);
+  const list = useThreadList(query, includeArchived, selectedProjectId);
   const queryClient = useQueryClient();
 
   const refresh = async (): Promise<void> => {
@@ -78,6 +84,8 @@ export function Sidebar({
 
   return (
     <aside className="sidebar" aria-label="Threads">
+      <ProjectSection selectedProjectId={selectedProjectId} onSelect={onSelectProject} />
+
       <div className="sidebar-top">
         <button
           type="button"
@@ -122,7 +130,11 @@ export function Sidebar({
 
       {list.data !== undefined && threads.length === 0 && (
         <p className="sidebar-note muted" data-testid="thread-list-empty">
-          {query === "" ? "No threads yet." : "No threads match that search."}
+          {query !== ""
+            ? "No threads match that search."
+            : selectedProjectId !== null
+              ? "No threads in this project yet."
+              : "No threads yet."}
         </p>
       )}
 
@@ -130,7 +142,7 @@ export function Sidebar({
         // Remounts on a new term or a new archive scope, which resets the scroll
         // position — a narrowed list must not stay scrolled past its own end.
         <ThreadList
-          key={`${query}|${String(includeArchived)}`}
+          key={`${query}|${String(includeArchived)}|${selectedProjectId ?? "all"}`}
           threads={threads}
           selectedThreadId={selectedThreadId}
           busyThreadId={busyThreadId}

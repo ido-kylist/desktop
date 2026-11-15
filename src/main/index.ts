@@ -42,7 +42,15 @@ import {
   softDeleteThread,
   updateThread,
 } from "./db/repo.js";
+import {
+  archiveAssistant,
+  createAssistant,
+  listAssistants,
+  updateAssistant,
+} from "./db/repo-assistants.js";
 import { attachToUserMessage, listAttachmentsForMessages } from "./db/repo-attachments.js";
+import { createProject, listProjects, updateProject } from "./db/repo-projects.js";
+import { createPrompt, deletePrompt, listPrompts, updatePrompt } from "./db/repo-prompts.js";
 import { AppError, toIpcError } from "./errors.js";
 import { registerNativeAppHooks, showLauncher } from "./native/handlers.js";
 import { type SecretBackend, type SecretStore, SecretsService } from "./secrets.js";
@@ -216,6 +224,8 @@ function readThread(threadId: string): ResponseOf<"chat.thread"> {
       id: tree.thread.id,
       title: tree.thread.title,
       updatedAt: tree.thread.updatedAt,
+      projectId: tree.thread.projectId,
+      assistantId: tree.thread.assistantId,
     },
     messages: tree.messages.map((message) => ({
       id: message.id,
@@ -341,7 +351,18 @@ const handlers: { [C in ChannelName]: Handler<C> } = {
 
   "chat.send": async (payload, event) => {
     const sent = await getGenerations().send(
-      { threadId: payload.threadId, text: payload.text, model: payload.model },
+      {
+        threadId: payload.threadId,
+        text: payload.text,
+        /**
+         * Forwarded as it arrived: absent, explicit null, and an id mean three different
+         * things to the turn (keep the thread's assistant, take it away, use this one),
+         * and defaulting here would erase one of them.
+         */
+        ...(payload.model === undefined ? {} : { model: payload.model }),
+        assistantId: payload.assistantId,
+        projectId: payload.projectId,
+      },
       generationSink(event.sender),
     );
     // Stored by `attachments.add` before send, so the files already exist; this only
@@ -420,6 +441,50 @@ const handlers: { [C in ChannelName]: Handler<C> } = {
       storedBaseUrl: getSettings(getOrm()).baseUrl,
     });
     return listModels({ baseUrl, apiKey: await readOptionalApiKey() });
+  },
+
+  /* --------------------------------------- D6 projects, assistants, prompts */
+
+  /** The sidebar's project list. A read: no arguments, no defaults to get wrong. */
+  "projects.list": () => listProjects(getOrm()),
+
+  /**
+   * Creation answers with the row the database wrote, so the sidebar can select the new
+   * project immediately instead of re-reading the list and guessing which one is new.
+   */
+  "projects.create": ({ name }) => createProject(getOrm(), name),
+
+  "projects.update": ({ projectId, name, archived }) => {
+    updateProject(getOrm(), { projectId, name, archived });
+    return { ok: true as const };
+  },
+
+  "assistants.list": (payload) => listAssistants(getOrm(), payload),
+
+  "assistants.create": (payload) => createAssistant(getOrm(), payload),
+
+  /**
+   * The stored row comes back rather than `{ ok: true }`: the screen edits a form, and a
+   * field it did not send has to be shown as the database has it, not as the form
+   * remembered it.
+   */
+  "assistants.update": (payload) => updateAssistant(getOrm(), payload),
+
+  /** Archiving. A second delete is NOT_FOUND, so a double tap cannot read as success. */
+  "assistants.delete": ({ assistantId }) => {
+    archiveAssistant(getOrm(), assistantId);
+    return { ok: true as const };
+  },
+
+  "prompts.list": (payload) => listPrompts(getOrm(), payload),
+
+  "prompts.create": (payload) => createPrompt(getOrm(), payload),
+
+  "prompts.update": (payload) => updatePrompt(getOrm(), payload),
+
+  "prompts.delete": ({ promptId }) => {
+    deletePrompt(getOrm(), promptId);
+    return { ok: true as const };
   },
 };
 

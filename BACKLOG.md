@@ -55,3 +55,26 @@ Work consciously deferred. Nothing here is a surprise in a demo, because it is w
   today because main emits usage first; worth a guard when D7 adds usage from tool calls.
 
 
+
+## Deferred from D6
+
+- **No way to move an existing thread into a project.** `chat.send` files a *new* thread
+  under `projectId`; filing an old one needs a `threads.update` field and a row affordance,
+  and the row is a fixed-height windowed list where a new control is a layout change.
+- **Archived projects and assistants are unreachable in the UI.** Archiving hides them
+  (which is the point), and there is no "show archived" view to restore one. Main supports
+  `assistants.list { includeArchived: true }` and `assistants.update { archived: false }`
+  already; only the surface is missing.
+- **Prompt search is `LIKE`, not FTS5.** Fine for tens of rows; a large library wants
+  `prompts_fts` with `bm25` and `snippet`, which is a virtual table and three triggers.
+- **`{{date}}` / `{{time}}` are UTC.** A local-time expansion needs a timezone setting so
+  the same prompt cannot mean two different days in two places.
+- **Assistants have no per-thread lock.** The picker can change the assistant of an
+  existing thread mid-conversation, and the thread records the latest one — so a thread
+  sent with two different assistants regenerates under the most recent. A per-message
+  assistant id is the honest fix.
+- **No component-level tests for the D6 surfaces.** The four catalog states are exercised
+  through the pure `buildCatalog`/`describeCatalogState` and end to end, not at the
+  component level; there is still no renderer test harness (deferred since D0).
+- **The prompt library does not manage folders or tags**, and insertion always appends to
+  the end of the composer rather than at the caret.

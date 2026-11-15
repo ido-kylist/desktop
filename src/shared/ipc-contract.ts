@@ -62,6 +62,51 @@ export const AttachmentSchema = z.object({
 });
 export type Attachment = z.infer<typeof AttachmentSchema>;
 
+/* ------------------------------------------------------- D6: the entities */
+
+/**
+ * A project is a folder for threads: a name, and an archive date instead of a
+ * delete. Archiving hides it from the picker without orphaning the threads that
+ * were filed under it — the same trade `threads.archived_at` makes.
+ */
+export const ProjectSchema = z.object({
+  id: z.uuid(),
+  name: z.string(),
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
+  archivedAt: z.iso.datetime().nullable(),
+});
+export type Project = z.infer<typeof ProjectSchema>;
+
+/**
+ * An assistant is a reusable send configuration: which model, how warm, and the
+ * system prompt that goes in front of the conversation.
+ *
+ * `temperature` is a plain number rather than an integer because that is what the
+ * provider takes; 0 and 2 are legal values, so it is not clamped here either.
+ */
+export const AssistantSchema = z.object({
+  id: z.uuid(),
+  name: z.string(),
+  model: z.string(),
+  systemPrompt: z.string(),
+  temperature: z.number().min(0).max(2),
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
+  archivedAt: z.iso.datetime().nullable(),
+});
+export type Assistant = z.infer<typeof AssistantSchema>;
+
+/** A saved prompt. No archive date: deleting one is the user's intent, and it is only text. */
+export const PromptSchema = z.object({
+  id: z.uuid(),
+  title: z.string(),
+  body: z.string(),
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
+});
+export type Prompt = z.infer<typeof PromptSchema>;
+
 /* ---------------------------------------------------------------- channels */
 
 type Contract = { request: z.ZodTypeAny; response: z.ZodTypeAny };
@@ -123,7 +168,15 @@ export const contracts = {
     request: z.object({
       threadId: z.uuid().nullable(),
       text: z.string().min(1),
-      model: z.string().min(1),
+      /**
+       * D6: optional, because an assistant can supply it. When both are absent the
+       * turn is refused with BAD_REQUEST rather than sent to a guessed model.
+       */
+      model: z.string().min(1).optional(),
+      /** D6: whose system prompt, model and temperature this turn runs with. */
+      assistantId: z.uuid().nullable().optional(),
+      /** D6: the project a *new* thread is filed under. Ignored for an existing thread. */
+      projectId: z.uuid().nullable().optional(),
       /** D4: ids returned by `attachments.add`, already stored and capped. */
       attachmentIds: z.array(z.uuid()).max(10).optional(),
     }),
@@ -157,6 +210,10 @@ export const contracts = {
         id: z.uuid(),
         title: z.string(),
         updatedAt: z.iso.datetime(),
+        /** D6: the project this thread is filed under, if any. */
+        projectId: z.uuid().nullable(),
+        /** D6: the assistant it was last sent with, if any. */
+        assistantId: z.uuid().nullable(),
       }),
       messages: z.array(
         z.object({
@@ -213,6 +270,8 @@ export const contracts = {
     request: z.object({
       /** FTS5 match against message text; omitted or empty means "everything". */
       query: z.string().max(500).optional(),
+      /** D6: only threads filed under this project; absent means "every project". */
+      projectId: z.uuid().optional(),
       limit: z.number().int().min(1).max(200),
       offset: z.number().int().min(0),
       includeArchived: z.boolean(),
@@ -226,6 +285,8 @@ export const contracts = {
           pinned: z.boolean(),
           archivedAt: z.iso.datetime().nullable(),
           messageCount: z.number().int().nonnegative(),
+          /** D6: carried per row so the list can say which project a thread is in. */
+          projectId: z.uuid().nullable(),
           /** First matching line of text, for the search result row. */
           snippet: z.string().nullable(),
         }),
@@ -310,6 +371,119 @@ export const contracts = {
 
   "native.showLauncher": {
     request: z.object({}),
+    response: z.object({ ok: z.literal(true) }),
+  },
+
+  /* ------------------------------------------------- D6 projects (threads) */
+
+  /**
+   * The sidebar's project list. Archived projects are not listed: archiving one is
+   * how a user puts it away, and there is no restore affordance to put it back with.
+   *
+   * `threadCount` is counted in SQL over live threads, because a project with a
+   * count of zero and a project whose count was never read look identical to a user
+   * and are different facts to a test.
+   */
+  "projects.list": {
+    request: z.object({}),
+    response: z.object({
+      items: z.array(ProjectSchema.extend({ threadCount: z.number().int().nonnegative() })),
+      total: z.number().int().nonnegative(),
+    }),
+  },
+
+  "projects.create": {
+    request: z.object({ name: z.string().trim().min(1).max(120) }),
+    response: ProjectSchema,
+  },
+
+  /** Rename, archive, or both. Absent fields are left alone; archived:false restores. */
+  "projects.update": {
+    request: z.object({
+      projectId: z.uuid(),
+      name: z.string().trim().min(1).max(120).optional(),
+      archived: z.boolean().optional(),
+    }),
+    response: z.object({ ok: z.literal(true) }),
+  },
+
+  /* ------------------------------------------------------ D6 assistants */
+
+  "assistants.list": {
+    request: z.object({ includeArchived: z.boolean() }),
+    response: z.object({
+      items: z.array(AssistantSchema),
+      total: z.number().int().nonnegative(),
+    }),
+  },
+
+  "assistants.create": {
+    request: z.object({
+      name: z.string().trim().min(1).max(80),
+      model: z.string().trim().min(1).max(200),
+      systemPrompt: z.string().max(20_000),
+      temperature: z.number().min(0).max(2),
+    }),
+    response: AssistantSchema,
+  },
+
+  /** The whole editable row: a partial patch, so a rename does not resend the prompt. */
+  "assistants.update": {
+    request: z.object({
+      assistantId: z.uuid(),
+      name: z.string().trim().min(1).max(80).optional(),
+      model: z.string().trim().min(1).max(200).optional(),
+      systemPrompt: z.string().max(20_000).optional(),
+      temperature: z.number().min(0).max(2).optional(),
+      archived: z.boolean().optional(),
+    }),
+    response: AssistantSchema,
+  },
+
+  /** Archiving, not removal: threads keep pointing at the assistant they were sent with. */
+  "assistants.delete": {
+    request: z.object({ assistantId: z.uuid() }),
+    response: z.object({ ok: z.literal(true) }),
+  },
+
+  /* --------------------------------------------------------- D6 prompts */
+
+  /**
+   * The library, and its search. `query` is matched over title and body **in SQL**,
+   * so the renderer never receives a list it then filters — a large library would
+   * cross the boundary whole and the count would be a lie.
+   */
+  "prompts.list": {
+    request: z.object({
+      query: z.string().max(500).optional(),
+      limit: z.number().int().min(1).max(200),
+      offset: z.number().int().min(0),
+    }),
+    response: z.object({
+      items: z.array(PromptSchema),
+      total: z.number().int().nonnegative(),
+    }),
+  },
+
+  "prompts.create": {
+    request: z.object({
+      title: z.string().trim().min(1).max(200),
+      body: z.string().trim().min(1).max(20_000),
+    }),
+    response: PromptSchema,
+  },
+
+  "prompts.update": {
+    request: z.object({
+      promptId: z.uuid(),
+      title: z.string().trim().min(1).max(200).optional(),
+      body: z.string().trim().min(1).max(20_000).optional(),
+    }),
+    response: PromptSchema,
+  },
+
+  "prompts.delete": {
+    request: z.object({ promptId: z.uuid() }),
     response: z.object({ ok: z.literal(true) }),
   },
 } as const satisfies Record<ChannelName, Contract>;

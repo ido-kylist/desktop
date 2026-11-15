@@ -193,3 +193,72 @@ export function previewAttachment(
 ): Promise<IpcResult<ResponseOf<"attachments.preview">>> {
   return invokeSettled("attachments.preview", { id });
 }
+
+/* ------------------------------------------- D6 projects, assistants, prompts */
+
+/**
+ * The project list drives a sidebar section, so a failure has to be renderable: these
+ * throw (`callOrThrow`) where TanStack Query owns the state, and settle where a click
+ * produced them and the surface has somewhere to put the error.
+ */
+export function listProjects(): Promise<ResponseOf<"projects.list">> {
+  return callOrThrow("projects.list", {});
+}
+
+export function createProject(
+  request: RequestOf<"projects.create">,
+): Promise<IpcResult<ResponseOf<"projects.create">>> {
+  return invokeSettled("projects.create", request);
+}
+
+export function updateProject(
+  request: RequestOf<"projects.update">,
+): Promise<IpcResult<ResponseOf<"projects.update">>> {
+  return invokeSettled("projects.update", request);
+}
+
+export function listAssistants(
+  request: RequestOf<"assistants.list">,
+): Promise<ResponseOf<"assistants.list">> {
+  return callOrThrow("assistants.list", request);
+}
+
+export function createAssistant(
+  request: RequestOf<"assistants.create">,
+): Promise<IpcResult<ResponseOf<"assistants.create">>> {
+  return invokeSettled("assistants.create", request);
+}
+
+export function updateAssistant(
+  request: RequestOf<"assistants.update">,
+): Promise<IpcResult<ResponseOf<"assistants.update">>> {
+  return invokeSettled("assistants.update", request);
+}
+
+export function deleteAssistant(
+  assistantId: string,
+): Promise<IpcResult<ResponseOf<"assistants.delete">>> {
+  return invokeSettled("assistants.delete", { assistantId });
+}
+
+export function listPrompts(
+  request: RequestOf<"prompts.list">,
+): Promise<ResponseOf<"prompts.list">> {
+  return callOrThrow("prompts.list", request);
+}
+
+export function createPrompt(
+  request: RequestOf<"prompts.create">,
+): Promise<IpcResult<ResponseOf<"prompts.create">>> {
+  return invokeSettled("prompts.create", request);
+}
+
+export function updatePrompt(
+  request: RequestOf<"prompts.update">,
+): Promise<IpcResult<ResponseOf<"prompts.update">>> {
+  return invokeSettled("prompts.update", request);
+}
+
+export function deletePrompt(promptId: string): Promise<IpcResult<ResponseOf<"prompts.delete">>> {
+  return invokeSettled("prompts.delete", { promptId });
+}

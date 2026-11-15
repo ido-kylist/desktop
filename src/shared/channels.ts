@@ -10,7 +10,7 @@
  * every channel listed here has a schema. Adding a name without a schema is a
  * compile error, so the two halves cannot drift.
  */
-export const PROTOCOL_VERSION = 6 as const;
+export const PROTOCOL_VERSION = 7 as const;
 
 export const CHANNEL_NAMES = [
   "app.info",
@@ -33,6 +33,17 @@ export const CHANNEL_NAMES = [
   "attachments.add",
   "attachments.preview",
   "native.showLauncher",
+  "projects.list",
+  "projects.create",
+  "projects.update",
+  "assistants.list",
+  "assistants.create",
+  "assistants.update",
+  "assistants.delete",
+  "prompts.list",
+  "prompts.create",
+  "prompts.update",
+  "prompts.delete",
 ] as const;
 
 export type ChannelName = (typeof CHANNEL_NAMES)[number];

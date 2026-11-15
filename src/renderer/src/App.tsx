@@ -1,18 +1,22 @@
 import type { Attachment, IpcError } from "@shared/ipc-contract";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Composer } from "./components/Composer";
+import { Composer, type PromptInsertion } from "./components/Composer";
 import { Diagnostics } from "./components/Diagnostics";
 import { ErrorBanner } from "./components/ErrorBanner";
 import { MessageList } from "./components/MessageList";
+import { PromptLibrary } from "./components/PromptLibrary";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { Sidebar } from "./components/Sidebar";
 import { UsageTotal } from "./components/UsageMeter";
+import { useAssistants } from "./hooks/use-assistants";
 import { useAutoScroll } from "./hooks/use-auto-scroll";
 import { useModelCatalog } from "./hooks/use-model-catalog";
+import { PROJECT_LIST_KEY } from "./hooks/use-projects";
 import { useSettings } from "./hooks/use-settings";
 import { useThreadHistory } from "./hooks/use-thread-history";
 import { THREAD_LIST_KEY } from "./hooks/use-thread-list";
+import { buildCatalog } from "./lib/catalogs";
 import { sumUsage } from "./lib/format";
 import {
   bridge,
@@ -21,6 +25,7 @@ import {
   setActiveVariant,
   stopGeneration,
   subscribeToGenerationEvents,
+  toIpcError,
 } from "./lib/ipc";
 import { DEFAULT_MODEL, type ModelOption, resolveDefaultModel } from "./lib/models";
 import { type ChatMessageView, THREAD_STORAGE_KEY, useChatStore } from "./store/chat-store";
@@ -84,9 +89,25 @@ export function App(): React.JSX.Element {
    */
   const [chosenModel, setChosenModel] = useState<string | null>(null);
   const [switching, setSwitching] = useState(false);
+  /**
+   * D6. `assistantId` is what the next turn will send with; null is a deliberate "none"
+   * and is passed as such, so a thread whose assistant was picked and then cleared stops
+   * carrying one. `projectId` is the sidebar's filter, and the project a *new* thread is
+   * filed under — an existing thread's project is never rewritten by a send.
+   */
+  const [assistantId, setAssistantId] = useState<string | null>(null);
+  const [projectId, setProjectId] = useState<string | null>(null);
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  const [promptInsert, setPromptInsert] = useState<PromptInsertion | null>(null);
 
   const settings = useSettings();
   const { catalog } = useModelCatalog();
+  const assistants = useAssistants();
+  const assistantCatalog = buildCatalog({
+    loading: assistants.isPending,
+    result: assistants.data?.items,
+    error: toIpcError(assistants.error),
+  });
   const model =
     resolveDefaultModel(
       chosenModel ?? settings.data?.defaultModel ?? null,
@@ -129,6 +150,22 @@ export function App(): React.JSX.Element {
     else localStorage.setItem(THREAD_STORAGE_KEY, threadId);
   }, [threadId]);
 
+  /**
+   * The picker follows the thread. Opening a conversation shows the assistant it was
+   * last sent with, so continuing it does not silently change the system prompt; a new
+   * chat keeps whatever was last picked, which is what a user starting a second session
+   * with the same assistant expects.
+   *
+   * Guarded on the snapshot belonging to the selected thread: a cached read for another
+   * thread must not answer for this one.
+   */
+  const loadedThreadId = history.thread?.id ?? null;
+  const loadedAssistantId = history.thread?.assistantId ?? null;
+  useEffect(() => {
+    if (threadId === null || loadedThreadId !== threadId) return;
+    setAssistantId(loadedAssistantId);
+  }, [threadId, loadedThreadId, loadedAssistantId]);
+
   const send = useCallback(
     async (text: string, attachments: readonly Attachment[] = []) => {
       // Ids come back from main, not from the renderer: main persists the turn and
@@ -137,10 +174,20 @@ export function App(): React.JSX.Element {
       // D4: only the ids of files main already stored travel with the turn. The chips the
       // store is given are the renderer's copy of the metadata, so the user's own message
       // can show them without waiting for a re-read.
+      const currentThreadId = useChatStore.getState().threadId;
       const result = await sendChat({
-        threadId: useChatStore.getState().threadId,
+        threadId: currentThreadId,
         text,
-        model,
+        /**
+         * With an assistant picked, the model is deliberately absent: main uses the
+         * assistant's, which is the whole point of picking one. Sending both would make
+         * the select the authority and the assistant's model dead weight.
+         */
+        ...(assistantId === null ? { model } : {}),
+        assistantId,
+        // Only a new thread is filed under the sidebar's project. An existing thread's
+        // project is never rewritten by a send.
+        ...(currentThreadId === null && projectId !== null ? { projectId } : {}),
         ...(attachments.length === 0
           ? {}
           : { attachmentIds: attachments.map((attachment) => attachment.id) }),
@@ -158,10 +205,12 @@ export function App(): React.JSX.Element {
         createdAt: new Date().toISOString(),
         ...(attachments.length === 0 ? {} : { attachments: [...attachments] }),
       });
-      // A new thread has to appear in the sidebar while its answer is still arriving.
+      // A new thread has to appear in the sidebar while its answer is still arriving,
+      // and a project's thread count moves with it.
       void queryClient.invalidateQueries({ queryKey: THREAD_LIST_KEY });
+      void queryClient.invalidateQueries({ queryKey: PROJECT_LIST_KEY });
     },
-    [model, setLastError, startTurn, queryClient],
+    [model, assistantId, projectId, setLastError, startTurn, queryClient],
   );
 
   const stop = useCallback(async () => {
@@ -262,6 +311,8 @@ export function App(): React.JSX.Element {
         <div className="shell">
           <Sidebar
             selectedThreadId={threadId}
+            selectedProjectId={projectId}
+            onSelectProject={setProjectId}
             onSelect={selectThread}
             onNewChat={() => selectThread(null)}
             onDeleted={onDeleted}
@@ -297,9 +348,25 @@ export function App(): React.JSX.Element {
               onModelChange={setChosenModel}
               onSend={(text, attachments) => void send(text, attachments)}
               onStop={() => void stop()}
+              assistants={assistantCatalog}
+              assistantId={assistantId}
+              onAssistantChange={setAssistantId}
+              promptToInsert={promptInsert}
+              onOpenLibrary={() => setLibraryOpen(true)}
             />
           </main>
         </div>
+      )}
+
+      {libraryOpen && (
+        <PromptLibrary
+          onClose={() => setLibraryOpen(false)}
+          onInsert={(text) => {
+            // A nonce, so inserting the same prompt twice still reaches the textarea.
+            setPromptInsert({ text, nonce: Date.now() });
+            setLibraryOpen(false);
+          }}
+        />
       )}
 
       <Diagnostics />
