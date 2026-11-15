@@ -1,16 +1,22 @@
 import type { KeyboardEvent } from "react";
 import { useEffect, useRef, useState } from "react";
-import { SELECTABLE_MODELS } from "../lib/models";
+import { describeCatalog, type ModelCatalog } from "../lib/models";
 
 /**
  * Enter sends, Shift+Enter is a newline, and the caret is in here on mount so the
  * app is usable from the keyboard without a click. The IME guard matters: pressing
  * Enter to accept a composition must not send a half-typed message.
+ *
+ * The model select is the provider's catalogue (P0), not a constant. When that
+ * catalogue is loading, empty, or failed, the select says so and stays disabled while
+ * still showing the id that would be sent — an empty select would be indistinguishable
+ * from a working one with no models.
  */
 export function Composer({
   streaming,
   disabled,
   model,
+  models,
   onModelChange,
   onSend,
   onStop,
@@ -18,6 +24,7 @@ export function Composer({
   streaming: boolean;
   disabled: boolean;
   model: string;
+  models: ModelCatalog;
   onModelChange: (model: string) => void;
   onSend: (text: string) => void;
   onStop: () => void;
@@ -42,6 +49,8 @@ export function Composer({
     submit();
   };
 
+  const catalogue = describeCatalog(models);
+
   return (
     <div className="composer">
       <textarea
@@ -59,16 +68,27 @@ export function Composer({
           <span>Model</span>
           <select
             aria-label="Model"
+            data-testid="composer-model"
             value={model}
+            disabled={models.state !== "ready"}
             onChange={(event) => onModelChange(event.target.value)}
           >
-            {SELECTABLE_MODELS.map((id) => (
-              <option key={id} value={id}>
-                {id}
-              </option>
-            ))}
+            {models.state === "ready" ? (
+              models.options.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.id}
+                </option>
+              ))
+            ) : (
+              <option value={model}>{model}</option>
+            )}
           </select>
         </label>
+        {models.state !== "ready" && (
+          <output className={`composer-note ${catalogue.tone}`} data-testid="composer-model-note">
+            {catalogue.text}
+          </output>
+        )}
         <div className="composer-buttons">
           <button
             type="button"

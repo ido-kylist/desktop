@@ -68,6 +68,26 @@ export function toIpcError(error: unknown): IpcError | null {
   return { code: "INTERNAL", message: error instanceof Error ? error.message : String(error) };
 }
 
+/**
+ * A settled invoke: a rejected bridge call (a handler this build does not have, a
+ * frame that went away) becomes a failed envelope like any other. The settings
+ * surface renders every failure, so it must not also have to catch an exception to
+ * stay on screen.
+ */
+async function invokeSettled<C extends ChannelName>(
+  channel: C,
+  payload: RequestOf<C>,
+): Promise<IpcResult<ResponseOf<C>>> {
+  try {
+    return await invoke(channel, payload);
+  } catch (error) {
+    return {
+      ok: false,
+      error: toIpcError(error) ?? { code: "INTERNAL", message: "The bridge call failed." },
+    };
+  }
+}
+
 export function sendChat(
   request: RequestOf<"chat.send">,
 ): Promise<IpcResult<ResponseOf<"chat.send">>> {
@@ -119,4 +139,34 @@ export function subscribeToGenerationEvents(
   const api = bridge();
   if (api === undefined) return () => undefined;
   return api.onGenerationEvent(listener);
+}
+
+/* --------------------------------------------------- P0 provider settings */
+
+/**
+ * The settings surface's reads and writes. Kept as envelopes rather than throws:
+ * every one of them is a user action with its own place to show a failure, and a
+ * `settings.get` that main cannot answer is a state on screen, not a crash.
+ */
+export function getSettings(): Promise<IpcResult<ResponseOf<"settings.get">>> {
+  return invokeSettled("settings.get", {});
+}
+
+export function setSettings(
+  request: RequestOf<"settings.set">,
+): Promise<IpcResult<ResponseOf<"settings.set">>> {
+  return invokeSettled("settings.set", request);
+}
+
+export function listModels(): Promise<IpcResult<ResponseOf<"models.list">>> {
+  return invokeSettled("models.list", {});
+}
+
+/** The key goes one way. No channel returns it, and nothing here keeps it. */
+export function setApiKey(key: string): Promise<IpcResult<ResponseOf<"secrets.setKey">>> {
+  return invokeSettled("secrets.setKey", { key });
+}
+
+export function clearApiKey(): Promise<IpcResult<ResponseOf<"secrets.clearKey">>> {
+  return invokeSettled("secrets.clearKey", {});
 }
