@@ -1,9 +1,9 @@
 {
   "name": "cleon-desktop",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "Cleon Desktop — local-first AI inference app",
+  "description": "Cleon Desktop \u2014 local-first AI inference app",
   "main": "out/main/index.js",
   "author": "ido-kylist",
   "license": "UNLICENSED",
