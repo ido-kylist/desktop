@@ -1,0 +1,25 @@
+{
+  "//": [
+    "The soak harness drives the app's own generation path, not a copy of it.",
+    "`generations.ts` and the repository layer are compiled to scripts/soak/.build with tsc,",
+    "because plain `node` cannot import a .ts file that its neighbours address as `./x.js`.",
+    "tsc is already a devDependency; the alternative was re-implementing the turn, which",
+    "would soak code that ships nowhere. Same trade as scripts/perf/tsconfig.json."
+  ],
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "./.build",
+    "rootDir": "../..",
+    "declaration": false,
+    "sourceMap": false,
+    "removeComments": false
+  },
+  "include": [
+    "../../src/main/api/generations.ts",
+    "../../src/main/api/bus.ts",
+    "../../src/main/db/**/*.ts",
+    "../../src/main/errors.ts",
+    "../../src/main/prompt-variables.ts"
+  ]
+}

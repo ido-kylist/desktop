@@ -11,7 +11,8 @@
       "!pnpm-lock.yaml",
       "!test-results",
       "!playwright-report",
-      "!scripts/perf/.build"
+      "!scripts/perf/.build",
+      "!scripts/soak/.build"
     ]
   },
   "formatter": {

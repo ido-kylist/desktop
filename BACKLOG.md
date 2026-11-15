@@ -181,3 +181,35 @@ Work consciously deferred. Nothing here is a surprise in a demo, because it is w
 - **axe is a devDependency only.** The audit runs in Playwright against the built app. There is
   no accessibility check in the renderer's own test suite, so a component change is only
   audited when the e2e runs.
+
+## Deferred from D10 — hardening
+
+- **The soak is headless.** `scripts/soak.mjs` drives `GenerationService` in a plain Node
+  process: no window, no renderer, no IPC, no React. A leak in the renderer — a growing
+  transcript, a listener on `window`, a detached DOM node — would not appear in `docs/SOAK.md`
+  at all. Soaking the packaged app needs a Playwright-driven run with `--user-data-dir` and a
+  way to read the renderer's heap, which is a different harness.
+- **The soak's provider is the mock.** It streams frame by frame with a real delay, so the SSE
+  path is genuinely exercised, but it never tests a provider that stalls, reconnects, or
+  dribbles bytes at an odd rate. Those are the timing shapes a 30-minute run against a real
+  endpoint would find.
+- **User content is not encrypted at rest.** The API key is encrypted with `safeStorage`
+  (`docs/SECURITY.md`); messages, artifacts, the knowledge corpus and its vectors are
+  plaintext in `<userData>`. Encrypting them needs a key the app can hold without the user
+  typing one — an OS-bound secret — and a migration for every existing row. Named in
+  `docs/SECURITY.md` as a fact, not hidden in a footnote.
+- **MCP servers are not sandboxed.** `shell: false` and piped stdio bound how the app talks to a
+  child; they do not bound what the child may do. There is no seatbelt profile, no cgroups, no
+  network namespace. A real containment story is a per-platform project of its own.
+- **MCP arguments are stored in cleartext.** `mcp_approvals.args_json` keeps what the call was
+  requested with, because the approval dialog has to show it. A secret pasted into a tool's
+  arguments is a secret in the database; redacting it would need a per-server schema and a
+  guess about which field is sensitive.
+- **The migration tests build prior versions from this build's migrations.** That proves the
+  upgrade *chain* and the checksum guard. It cannot prove that a database written by a shipped
+  binary matches what this build thinks migration 3 does — for that, the drift check is the
+  only witness, and it refuses rather than repairs. Captured fixtures from each released build
+  would close it and would also be a licence to keep old databases in the repo.
+- **Nothing measures battery or thermal cost.** A 30-minute soak on AC power says nothing about
+  a laptop on a train.
+
