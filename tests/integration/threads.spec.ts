@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createDb, type DrizzleDb } from "../../src/main/db/client.js";
 import { closeDatabase, type Db, openDatabase, schemaVersion } from "../../src/main/db/index.js";
+import { MIGRATIONS } from "../../src/main/db/migrations.js";
 import {
   listThreads,
   softDeleteThread,
@@ -214,8 +215,10 @@ beforeEach(() => {
 });
 
 describe("schema", () => {
-  it("applies migration 2 and exposes active_leaf_id", () => {
-    expect(schemaVersion(conn)).toBe(2);
+  it("applies every migration and exposes active_leaf_id", () => {
+    // Derived from the ledger so adding a migration never breaks this assertion.
+    const latest = MIGRATIONS.at(-1)?.version;
+    expect(schemaVersion(conn)).toBe(latest);
 
     const columns = conn.prepare("PRAGMA table_info(threads)").all() as { name: string }[];
     expect(columns.map((column) => column.name)).toContain("active_leaf_id");

@@ -92,7 +92,21 @@ export const generations = sqliteTable(
   (t) => [index("generations_thread_idx").on(t.threadId)],
 );
 
+/**
+ * Migration 3. Provider settings as rows rather than columns: the set of things a
+ * settings screen owns grows, and a new key must not be a migration.
+ *
+ * No index beyond the primary key — the only read is `WHERE key IN (...)`, which
+ * SQLite answers from the primary key index.
+ */
+export const settings = sqliteTable("settings", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+  updatedAt: text("updated_at").notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
+});
+
 export type Thread = typeof threads.$inferSelect;
 export type Message = typeof messages.$inferSelect;
 export type ContentBlock = typeof contentBlocks.$inferSelect;
 export type Generation = typeof generations.$inferSelect;
+export type Setting = typeof settings.$inferSelect;

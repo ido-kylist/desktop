@@ -59,7 +59,7 @@ describe("migration upgrade", () => {
     for (const dir of dirs) await rm(dir, { recursive: true, force: true });
   });
 
-  it("upgrades a real v1 database to v2 without losing data or the FTS index", async () => {
+  it("upgrades a real v1 database to the latest schema without losing data or the FTS index", async () => {
     const dir = await mkdtemp(join(tmpdir(), "cleon-migrate-"));
     dirs.push(dir);
     const path = join(dir, "cleon.db");
@@ -76,7 +76,10 @@ describe("migration upgrade", () => {
 
     const conn = openDatabase(path);
 
-    expect(schemaVersion(conn)).toBe(2);
+    // Derived, not hardcoded: every new migration must not require editing this test.
+    const latest = MIGRATIONS.at(-1)?.version;
+    expect(latest).toBeDefined();
+    expect(schemaVersion(conn)).toBe(latest);
 
     const columns = conn.prepare("PRAGMA table_info(threads)").all() as { name: string }[];
     expect(columns.map((c) => c.name)).toContain("active_leaf_id");
@@ -96,14 +99,11 @@ describe("migration upgrade", () => {
       .all("otters") as { message_id: string }[];
     expect(hit.map((r) => r.message_id)).toEqual(["22222222-2222-4222-8222-222222222222"]);
 
-    // The ledger records both migrations, in order.
+    // The ledger records every migration, in order, with the declared names.
     const ledger = conn
       .prepare("SELECT version, name FROM schema_migrations ORDER BY version")
       .all() as { version: number; name: string }[];
-    expect(ledger).toEqual([
-      { version: 1, name: "init" },
-      { version: 2, name: "thread-active-leaf" },
-    ]);
+    expect(ledger).toEqual(MIGRATIONS.map((m) => ({ version: m.version, name: m.name })));
   });
 
   it("refuses to open a database whose applied migration was edited", async () => {

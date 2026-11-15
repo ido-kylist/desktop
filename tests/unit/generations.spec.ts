@@ -322,7 +322,9 @@ describe("resolveBaseUrl", () => {
     } catch (error) {
       expect(error).toBeInstanceOf(AppError);
       expect((error as AppError).code).toBe("INTERNAL");
-      expect((error as AppError).message).toBe("no inference base URL configured");
+      expect((error as AppError).message).toBe(
+        "No provider configured. Open Settings and add your base URL.",
+      );
     }
   });
 });

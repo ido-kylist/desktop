@@ -5,9 +5,12 @@ import { Composer } from "./components/Composer";
 import { Diagnostics } from "./components/Diagnostics";
 import { ErrorBanner } from "./components/ErrorBanner";
 import { MessageList } from "./components/MessageList";
+import { SettingsScreen } from "./components/SettingsScreen";
 import { Sidebar } from "./components/Sidebar";
 import { UsageTotal } from "./components/UsageMeter";
 import { useAutoScroll } from "./hooks/use-auto-scroll";
+import { useModelCatalog } from "./hooks/use-model-catalog";
+import { useSettings } from "./hooks/use-settings";
 import { useThreadHistory } from "./hooks/use-thread-history";
 import { THREAD_LIST_KEY } from "./hooks/use-thread-list";
 import { sumUsage } from "./lib/format";
@@ -19,8 +22,14 @@ import {
   stopGeneration,
   subscribeToGenerationEvents,
 } from "./lib/ipc";
-import { DEFAULT_MODEL } from "./lib/models";
+import { DEFAULT_MODEL, type ModelOption, resolveDefaultModel } from "./lib/models";
 import { type ChatMessageView, THREAD_STORAGE_KEY, useChatStore } from "./store/chat-store";
+
+/** The two surfaces this window has. A typed union, not a router: there is no URL. */
+type View = "chat" | "settings";
+
+/** A stable empty list, so the default-model derivation is not re-run for a new ref. */
+const NO_OPTIONS: readonly ModelOption[] = [];
 
 /**
  * The text a retry would resend: the user turn that produced the last failed answer.
@@ -66,8 +75,23 @@ export function App(): React.JSX.Element {
   const setLastError = useChatStore((state) => state.setLastError);
   const selectThread = useChatStore((state) => state.selectThread);
 
-  const [model, setModel] = useState<string>(DEFAULT_MODEL);
+  const [view, setView] = useState<View>("chat");
+  /**
+   * The model this window will send. Null means "nobody picked one yet", so the
+   * stored default wins — and when even that is absent from the endpoint's catalogue,
+   * the first model it lists does. `DEFAULT_MODEL` only covers the gap before any
+   * catalogue has arrived.
+   */
+  const [chosenModel, setChosenModel] = useState<string | null>(null);
   const [switching, setSwitching] = useState(false);
+
+  const settings = useSettings();
+  const { catalog } = useModelCatalog();
+  const model =
+    resolveDefaultModel(
+      chosenModel ?? settings.data?.defaultModel ?? null,
+      catalog.state === "ready" ? catalog.options : NO_OPTIONS,
+    ) ?? DEFAULT_MODEL;
 
   const history = useThreadHistory(threadId);
   const reloadThread = history.reload;
@@ -204,48 +228,67 @@ export function App(): React.JSX.Element {
         <h1>Cleon</h1>
         {totals !== null && <UsageTotal usage={totals} />}
         <span className="tag">D2 · history</span>
+        <button
+          type="button"
+          className="btn btn-small"
+          aria-label="Settings"
+          title="Settings"
+          data-testid="open-settings"
+          onClick={() => setView(view === "settings" ? "chat" : "settings")}
+        >
+          ⚙
+        </button>
       </header>
 
-      <div className="shell">
-        <Sidebar
-          selectedThreadId={threadId}
-          onSelect={selectThread}
-          onNewChat={() => selectThread(null)}
-          onDeleted={onDeleted}
+      {view === "settings" ? (
+        <SettingsScreen
+          model={model}
+          onModelChange={setChosenModel}
+          onClose={() => setView("chat")}
         />
-
-        <main className="chat">
-          <div className="transcript" ref={scroll.ref} onScroll={scroll.onScroll}>
-            {(messages.length > 0 || threadId === null) && (
-              <MessageList
-                messages={messages}
-                groups={history.groups}
-                busy={busy}
-                onSwitchVariant={(messageId) => void switchVariant(messageId)}
-                onRegenerate={(messageId) => void regenerate(messageId)}
-              />
-            )}
-            {history.loading && <p className="muted">Restoring…</p>}
-            {restoreBanner(history.error)}
-            {turnError !== null && (
-              <ErrorBanner
-                error={turnError}
-                retryText={retryText}
-                onRetry={(text) => void send(text)}
-              />
-            )}
-          </div>
-
-          <Composer
-            streaming={streaming !== null}
-            disabled={preloadMissing}
-            model={model}
-            onModelChange={setModel}
-            onSend={(text) => void send(text)}
-            onStop={() => void stop()}
+      ) : (
+        <div className="shell">
+          <Sidebar
+            selectedThreadId={threadId}
+            onSelect={selectThread}
+            onNewChat={() => selectThread(null)}
+            onDeleted={onDeleted}
           />
-        </main>
-      </div>
+
+          <main className="chat">
+            <div className="transcript" ref={scroll.ref} onScroll={scroll.onScroll}>
+              {(messages.length > 0 || threadId === null) && (
+                <MessageList
+                  messages={messages}
+                  groups={history.groups}
+                  busy={busy}
+                  onSwitchVariant={(messageId) => void switchVariant(messageId)}
+                  onRegenerate={(messageId) => void regenerate(messageId)}
+                />
+              )}
+              {history.loading && <p className="muted">Restoring…</p>}
+              {restoreBanner(history.error)}
+              {turnError !== null && (
+                <ErrorBanner
+                  error={turnError}
+                  retryText={retryText}
+                  onRetry={(text) => void send(text)}
+                />
+              )}
+            </div>
+
+            <Composer
+              streaming={streaming !== null}
+              disabled={preloadMissing}
+              model={model}
+              models={catalog}
+              onModelChange={setChosenModel}
+              onSend={(text) => void send(text)}
+              onStop={() => void stop()}
+            />
+          </main>
+        </div>
+      )}
 
       <Diagnostics />
     </div>
