@@ -1053,3 +1053,337 @@ body {
   line-height: 1;
   padding: 5px 9px;
 }
+
+/* --------------------------------------------- D6: projects in the sidebar */
+
+/* Above the search box, and capped: a long project list must not eat the threads. */
+.projects {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.projects-head {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.project-new-form {
+  display: flex;
+  gap: 6px;
+}
+
+.project-new,
+.project-rename {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 8px;
+}
+
+.project-new:focus,
+.project-rename:focus {
+  outline: none;
+  border-color: #33405a;
+}
+
+.project-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  /* A dozen projects are scannable; forty are a scroll of their own. */
+  max-height: 30vh;
+  overflow-y: auto;
+}
+
+.project-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.project-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  padding: 4px 6px;
+  cursor: pointer;
+}
+
+.project-name:hover {
+  background: var(--panel-strong);
+}
+
+.project-name[aria-current="true"] {
+  background: var(--panel-strong);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.project-name-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-count {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.project-action {
+  flex: 0 0 auto;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font-size: 11px;
+  padding: 2px 4px;
+  cursor: pointer;
+}
+
+.project-action:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.project-action:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* -------------------------------------------------- D6: composer additions */
+
+/* Two pickers, a library button and the model no longer fit one line on a narrow window. */
+.composer-actions {
+  flex-wrap: wrap;
+}
+
+.btn-library {
+  font-size: 12px;
+}
+
+/* What an assistant will send. Read-only, so it is text rather than a disabled select. */
+.composer-fixed {
+  font-size: 11px;
+  color: var(--muted);
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  padding: 4px 8px;
+}
+
+/* ------------------------------------------------------ D6: the library */
+
+.library-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 24px;
+  background: color-mix(in srgb, #05070b 72%, transparent);
+  backdrop-filter: blur(2px);
+}
+
+.library {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(760px, 100%);
+  max-height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel);
+  padding: 16px 18px 18px;
+  box-shadow: 0 24px 60px color-mix(in srgb, #000 55%, transparent);
+}
+
+.library-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.library-head h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.library-tabs {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.library-tab {
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.library-tab[aria-selected="true"] {
+  border-color: var(--line);
+  background: var(--panel-strong);
+  color: var(--text);
+}
+
+.library-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.library-toolbar .thread-search {
+  flex: 1 1 auto;
+}
+
+.library-count {
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.library-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  padding: 10px;
+}
+
+.library-form-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.library-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 180px;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.library-field-narrow {
+  flex: 0 0 80px;
+}
+
+.library-field input,
+.library-field textarea {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 8px;
+  resize: vertical;
+}
+
+.library-field input:focus,
+.library-field textarea:focus {
+  outline: none;
+  border-color: #33405a;
+}
+
+.library-form-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.library-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.library-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  padding: 8px 10px;
+}
+
+.library-row-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.library-row-title {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.library-row-meta {
+  font-size: 11px;
+  color: var(--muted);
+  font-family: var(--mono);
+}
+
+/* Bodies can be long; three lines is enough to recognise one, and the title is the key. */
+.library-row-body {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: pre-wrap;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+
+.library-row-actions {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 6px;
+}
+
+.library-edit {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}

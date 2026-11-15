@@ -136,4 +136,58 @@ CREATE INDEX IF NOT EXISTS attachments_message_idx ON attachments (message_id);
 CREATE INDEX IF NOT EXISTS attachments_thread_idx ON attachments (thread_id);
 `.trim(),
   },
+  {
+    /**
+     * D6: projects, assistants, prompts — and the two columns on `threads` that make
+     * them mean something.
+     *
+     * `threads.project_id` has existed since migration 1 and already carries its index
+     * (`threads_project_idx`); what was missing was the table it points at. The index on
+     * `threads.assistant_id` is new, because that column is.
+     *
+     * No foreign keys on the two new thread columns, for the same reason
+     * `active_leaf_id` has none: both are hints for the next turn, and a project or
+     * assistant archived while a thread still names it must not make the thread
+     * unreadable. Deleting an assistant archives it, and a project is never deleted.
+     *
+     * `temperature` is REAL. SQLite's dynamic typing would accept a string here, so the
+     * contract's `z.number().min(0).max(2)` and the Drizzle column type are what keep it
+     * honest.
+     */
+    version: 5,
+    name: "projects-assistants-prompts",
+    sql: `
+CREATE TABLE IF NOT EXISTS projects (
+  id          TEXT PRIMARY KEY,
+  name        TEXT NOT NULL,
+  created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  archived_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS assistants (
+  id            TEXT PRIMARY KEY,
+  name          TEXT NOT NULL,
+  model         TEXT NOT NULL,
+  system_prompt TEXT NOT NULL DEFAULT '',
+  temperature   REAL NOT NULL DEFAULT 0.7,
+  created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  archived_at   TEXT
+);
+CREATE INDEX IF NOT EXISTS assistants_updated_idx ON assistants (updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS prompts (
+  id         TEXT PRIMARY KEY,
+  title      TEXT NOT NULL,
+  body       TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS prompts_updated_idx ON prompts (updated_at DESC);
+
+ALTER TABLE threads ADD COLUMN assistant_id TEXT;
+CREATE INDEX IF NOT EXISTS threads_assistant_idx ON threads (assistant_id);
+`.trim(),
+  },
 ];

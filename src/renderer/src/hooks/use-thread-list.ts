@@ -24,12 +24,13 @@ export const THREAD_PAGE_SIZE = 200;
 /** Prefix for every list query, used to invalidate all terms at once. */
 export const THREAD_LIST_KEY = ["threads.list"] as const;
 
-export function useThreadList(query: string, includeArchived: boolean) {
+export function useThreadList(query: string, includeArchived: boolean, projectId: string | null) {
   return useQuery({
-    queryKey: [...THREAD_LIST_KEY, query, includeArchived],
+    queryKey: [...THREAD_LIST_KEY, query, includeArchived, projectId],
     queryFn: () =>
       listThreads({
-        query: query === "" ? undefined : query,
+        ...(query === "" ? {} : { query }),
+        ...(projectId === null ? {} : { projectId }),
         limit: THREAD_PAGE_SIZE,
         offset: 0,
         includeArchived,

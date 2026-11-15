@@ -1,8 +1,8 @@
 import { sql } from "drizzle-orm";
-import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { index, integer, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 /**
- * Schema v1. Local-first: everything lives here, nothing is authoritative in the cloud.
+ * Schema v5. Local-first: everything lives here, nothing is authoritative in the cloud.
  *
  * Branching is native: `messages.parent_id` is a tree, not a list. Regenerating a
  * message creates a sibling under the same parent; forking reparents a subtree.
@@ -13,6 +13,12 @@ export const threads = sqliteTable(
     id: text("id").primaryKey(),
     title: text("title").notNull().default("New thread"),
     projectId: text("project_id"),
+    /**
+     * Migration 5. The assistant this thread was last sent with. No foreign key: an
+     * archived assistant must not make a thread unreadable, and the id is only read to
+     * re-apply a system prompt on the next turn.
+     */
+    assistantId: text("assistant_id"),
     pinned: integer("pinned", { mode: "boolean" }).notNull().default(false),
     archivedAt: text("archived_at"),
     /**
@@ -28,7 +34,56 @@ export const threads = sqliteTable(
   (t) => [
     index("threads_updated_idx").on(t.updatedAt),
     index("threads_project_idx").on(t.projectId),
+    index("threads_assistant_idx").on(t.assistantId),
   ],
+);
+
+/**
+ * Migration 5. A folder for threads. Archived rather than deleted, so the threads
+ * filed under it keep a name to fall back to.
+ */
+export const projects = sqliteTable("projects", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  createdAt: text("created_at").notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
+  updatedAt: text("updated_at").notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
+  archivedAt: text("archived_at"),
+});
+
+/**
+ * Migration 5. A reusable send configuration: the model, the temperature, and the
+ * system prompt that goes in front of the conversation.
+ *
+ * `temperature` is `real` because a provider's temperature is a float (0.2 is a
+ * meaningful value), and the default matches what most providers use when the field
+ * is omitted.
+ */
+export const assistants = sqliteTable(
+  "assistants",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    model: text("model").notNull(),
+    systemPrompt: text("system_prompt").notNull().default(""),
+    temperature: real("temperature").notNull().default(0.7),
+    createdAt: text("created_at").notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
+    updatedAt: text("updated_at").notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
+    archivedAt: text("archived_at"),
+  },
+  (t) => [index("assistants_updated_idx").on(t.updatedAt)],
+);
+
+/** Migration 5. A saved prompt. Deleted for real: it is only text, and there is nothing to cascade. */
+export const prompts = sqliteTable(
+  "prompts",
+  {
+    id: text("id").primaryKey(),
+    title: text("title").notNull(),
+    body: text("body").notNull(),
+    createdAt: text("created_at").notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
+    updatedAt: text("updated_at").notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
+  },
+  (t) => [index("prompts_updated_idx").on(t.updatedAt)],
 );
 
 export const messages = sqliteTable(
@@ -110,3 +165,6 @@ export type Message = typeof messages.$inferSelect;
 export type ContentBlock = typeof contentBlocks.$inferSelect;
 export type Generation = typeof generations.$inferSelect;
 export type Setting = typeof settings.$inferSelect;
+export type Project = typeof projects.$inferSelect;
+export type Assistant = typeof assistants.$inferSelect;
+export type Prompt = typeof prompts.$inferSelect;

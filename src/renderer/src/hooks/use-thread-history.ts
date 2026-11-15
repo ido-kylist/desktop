@@ -50,6 +50,12 @@ export interface ThreadHistory {
   error: IpcError | null;
   /** Sibling sets for the active path, keyed by message id. */
   groups: Record<string, VariantGroup>;
+  /**
+   * D6: what the loaded thread carries, as main stored it. Null while there is no
+   * snapshot for the selected thread — which is "not read yet", not "no assistant",
+   * and the composer must not reset the picker on the strength of it.
+   */
+  thread: { id: string; projectId: string | null; assistantId: string | null } | null;
   /** Re-reads the thread and puts the server's active path on screen. */
   reload: () => Promise<void>;
 }
@@ -112,6 +118,16 @@ export function useThreadHistory(threadId: string | null): ThreadHistory {
     loading: query.isPending && threadId !== null,
     error: toIpcError(error),
     groups: view?.groups ?? NO_GROUPS,
+    // Guarded by the same id check as the hydration: a cached snapshot for another
+    // thread must not answer for this one.
+    thread:
+      snapshot !== undefined && snapshot.thread.id === threadId
+        ? {
+            id: snapshot.thread.id,
+            projectId: snapshot.thread.projectId,
+            assistantId: snapshot.thread.assistantId,
+          }
+        : null,
     reload,
   };
 }

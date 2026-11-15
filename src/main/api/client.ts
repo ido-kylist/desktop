@@ -110,6 +110,8 @@ export interface StreamChatInput {
   messages: ChatMessage[];
   signal: AbortSignal;
   onDelta: (delta: ChatDelta) => void;
+  /** D6: an assistant's temperature. Omitted means "the provider's own default". */
+  temperature?: number;
   /** Injected by tests; defaults to the platform fetch. */
   fetchImpl?: typeof fetch;
 }
@@ -308,6 +310,9 @@ export async function streamChatCompletion(input: StreamChatInput): Promise<Stre
         messages: input.messages,
         stream: true,
         stream_options: { include_usage: true },
+        // Absent rather than null: a provider that has no such field is happier
+        // without it, and `null` is not a temperature.
+        ...(input.temperature === undefined ? {} : { temperature: input.temperature }),
       }),
       signal: input.signal,
     });

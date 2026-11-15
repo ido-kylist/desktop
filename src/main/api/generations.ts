@@ -2,9 +2,11 @@ import { randomUUID } from "node:crypto";
 import type { GenerationEvent, IpcError, RequestOf, ResponseOf } from "@shared/ipc-contract";
 import type { DrizzleDb } from "../db/client.js";
 import {
+  assignThread,
   createThread,
   finishGeneration,
   getMessage,
+  getThread,
   getThreadWithMessages,
   insertGeneration,
   insertMessage,
@@ -14,8 +16,11 @@ import {
   touchThread,
   updateMessageText,
 } from "../db/repo.js";
-import type { Message } from "../db/schema.js";
+import { type AssistantRow, getAssistant } from "../db/repo-assistants.js";
+import { assertProjectExists, getProject } from "../db/repo-projects.js";
+import type { Message, Thread } from "../db/schema.js";
 import { AppError, toIpcError } from "../errors.js";
+import { expandPromptVariables, promptClock } from "../prompt-variables.js";
 import type { GenerationBus } from "./bus.js";
 import {
   type ChatDelta,
@@ -83,6 +88,8 @@ interface RunContext {
   threadId: string;
   assistantMessageId: string;
   model: string;
+  /** D6: from the assistant, when one applied. Undefined means "provider default". */
+  temperature: number | undefined;
   history: ChatMessage[];
   signal: AbortSignal;
   release: () => void;
@@ -108,6 +115,22 @@ function toPrompt(history: readonly Message[]): ChatMessage[] {
 /** A new turn's prompt: the active path so far, then the message being sent. */
 function toChatMessages(history: readonly Message[], userText: string): ChatMessage[] {
   return [...toPrompt(history), { role: "user", content: userText }];
+}
+
+/**
+ * Which model the turn is addressed to.
+ *
+ * The request wins, then the assistant, then nothing — and nothing is a refusal rather
+ * than a default, because a turn sent to a guessed model is a turn the user did not ask
+ * for. A blank string is treated as absent: it is what a cleared input looks like, and
+ * `model: ""` would reach the provider as a malformed request.
+ */
+function resolveModel(
+  requested: string | null | undefined,
+  assistant: AssistantRow | null,
+): string | null {
+  const candidate = requested ?? assistant?.model ?? "";
+  return candidate.trim() === "" ? null : candidate;
 }
 
 function accumulateToolCall(
@@ -162,9 +185,15 @@ export class GenerationService {
   /**
    * Persists the turn and starts it. Returns as soon as the rows exist.
    *
-   * Every failure before the network call (an unknown thread) rejects, because
-   * nothing has been written and the renderer deserves a normal IPC error. Every
-   * failure after it is an event, because by then the turn is durable.
+   * Every failure before the network call (an unknown thread, an unknown assistant, no
+   * model at all) rejects, because nothing has been written and the renderer deserves a
+   * normal IPC error. Every failure after it is an event, because by then the turn is
+   * durable.
+   *
+   * D6: an assistant supplies three things — the system prompt that goes in front of the
+   * conversation, the model when the request does not name one, and the temperature.
+   * Both are resolved *before* the transaction so a bad assistant id cannot leave a
+   * half-written turn behind.
    */
   async send(request: ChatSendRequest, sink: GenerationSink): Promise<ChatSendResponse> {
     const existing =
@@ -185,19 +214,50 @@ export class GenerationService {
      */
     const path = existing === null ? [] : resolveActivePath(existing);
 
+    /**
+     * Which assistant this turn runs with. A missing field keeps whatever the thread
+     * already had (a resumed conversation belongs to the assistant it was started
+     * with); an explicit null is the user taking the assistant away.
+     */
+    const assistantId =
+      request.assistantId === undefined
+        ? (existing?.thread.assistantId ?? null)
+        : request.assistantId;
+    const assistant = this.loadAssistant(assistantId, "require");
+
+    const model = resolveModel(request.model, assistant);
+    if (model === null) {
+      throw new AppError("BAD_REQUEST", "no model: pass one, or pick an assistant that has one", {
+        details: { assistantId },
+      });
+    }
+
     const threadId = request.threadId ?? randomUUID();
     const parentId = path.at(-1)?.id ?? null;
     const userMessageId = randomUUID();
     const assistantMessageId = randomUUID();
     const generationId = randomUUID();
-    const history = toChatMessages(path, request.text);
+
+    /**
+     * A project only applies to a thread that does not exist yet: filing an existing
+     * conversation under a project on every send would let the sidebar's filter move
+     * threads the user never touched.
+     */
+    const projectId = existing === null ? (request.projectId ?? null) : existing.thread.projectId;
+    if (existing === null && projectId !== null) assertProjectExists(this.db, projectId);
 
     // One transaction, because a half-written turn is worse than no turn: a
     // thread with a user message and no generation row would look like a turn
     // that finished instantly. Drizzle on better-sqlite3 is synchronous, so the
     // whole block commits before the first byte goes over the network.
     this.db.transaction((tx) => {
-      if (existing === null) createThread(tx, { id: threadId });
+      if (existing === null) {
+        createThread(tx, { id: threadId, projectId, assistantId: assistant?.id ?? null });
+      } else if (assistantId !== existing.thread.assistantId) {
+        // The picker can change the assistant mid-conversation; the column follows it
+        // so a relaunch, a regenerate or the next turn re-applies the same one.
+        assignThread(tx, threadId, { assistantId });
+      }
 
       insertMessage(tx, {
         id: userMessageId,
@@ -205,7 +265,7 @@ export class GenerationService {
         parentId,
         role: "user",
         text: request.text,
-        model: request.model,
+        model,
       });
 
       // The assistant row exists before the answer does: a crash mid-stream leaves
@@ -216,19 +276,35 @@ export class GenerationService {
         parentId: userMessageId,
         role: "assistant",
         text: "",
-        model: request.model,
+        model,
       });
       insertGeneration(tx, {
         id: generationId,
         threadId,
         messageId: assistantMessageId,
-        model: request.model,
+        model,
       });
       touchThread(tx, threadId);
     });
 
+    /**
+     * The prompt is built after the transaction, from the thread as it now exists:
+     * a new thread's title is the database's default, and `{{thread_title}}` has to
+     * expand to the row the user is actually in rather than to a guess made before it
+     * was written.
+     */
+    const stored = getThread(this.db, threadId);
+    const history = this.withAssistantPrompt(assistant, stored, toChatMessages(path, request.text));
+
     this.startTurn(
-      { generationId, threadId, assistantMessageId, model: request.model, history },
+      {
+        generationId,
+        threadId,
+        assistantMessageId,
+        model,
+        temperature: assistant?.temperature,
+        history,
+      },
       sink,
     );
 
@@ -243,15 +319,30 @@ export class GenerationService {
    * the prompt is the ancestor path up to the message being answered — so the second
    * answer is given the same question the first one got, with no trace of the answer
    * it is replacing.
+   *
+   * D6: the thread's assistant still applies. A second answer written under a different
+   * system prompt than the first is not a variant of it, it is a different conversation
+   * wearing the same history.
    */
   regenerate(messageId: string, sink: GenerationSink): ResponseOf<"chat.regenerate"> {
     const result = regenerateTurn(this.db, messageId);
 
     const loaded = getThreadWithMessages(this.db, result.threadId);
     const path = loaded === null ? [] : resolveAncestorPath(loaded, result.userMessageId);
-    // The regenerated turn runs on the model of the answer it replaces; the repo
-    // copies it onto the new row, which is where this reads it from.
-    const model = getMessage(this.db, result.assistantMessageId)?.model ?? "";
+    const thread = getThread(this.db, result.threadId);
+    /**
+     * Tolerated rather than required: an assistant archived (or lost) between two turns
+     * must not turn "regenerate this answer" into an error about a menu entry. The turn
+     * falls back to the model the answer being replaced was produced with.
+     */
+    const assistant = this.loadAssistant(thread?.assistantId ?? null, "tolerate");
+    /**
+     * The assistant's model wins over the one the replaced answer ran on: re-answering
+     * with the model the assistant names is the point of having picked it. A model-less
+     * row still regenerates with the stored value, empty string included, exactly as it
+     * did before D6.
+     */
+    const model = assistant?.model ?? getMessage(this.db, result.assistantMessageId)?.model ?? "";
 
     this.startTurn(
       {
@@ -259,12 +350,67 @@ export class GenerationService {
         threadId: result.threadId,
         assistantMessageId: result.assistantMessageId,
         model,
-        history: toPrompt(path),
+        temperature: assistant?.temperature,
+        history: this.withAssistantPrompt(assistant, thread, toPrompt(path)),
       },
       sink,
     );
 
     return result;
+  }
+
+  /**
+   * One assistant by id, or the failure the caller asked for.
+   *
+   * `require` is `chat.send` naming an id: a NOT_FOUND before anything is written is a
+   * refusal the user can act on. `tolerate` is a turn resuming whatever the thread
+   * already carried, where a missing row must degrade to "no assistant" instead of
+   * failing an operation that has nothing to do with the announcement of it.
+   */
+  private loadAssistant(
+    assistantId: string | null,
+    mode: "require" | "tolerate",
+  ): AssistantRow | null {
+    if (assistantId === null) return null;
+    const assistant = getAssistant(this.db, assistantId);
+    if (assistant === null && mode === "require") {
+      throw new AppError("NOT_FOUND", "assistant not found", { details: { assistantId } });
+    }
+    return assistant;
+  }
+
+  /**
+   * The system turn an assistant contributes, in front of the conversation.
+   *
+   * The prompt is expanded here, at send time, and not when the assistant was saved:
+   * `{{date}}` has to mean the day the message was sent, and `{{thread_title}}` has to
+   * mean the title the thread ended up with. Only the system message is expanded — the
+   * user's own text is theirs, and rewriting `{{date}}` inside it would be the app
+   * putting words in their mouth.
+   */
+  private withAssistantPrompt(
+    assistant: AssistantRow | null,
+    thread: Pick<Thread, "title" | "projectId"> | null,
+    history: ChatMessage[],
+  ): ChatMessage[] {
+    if (assistant === null || assistant.systemPrompt.trim() === "") return history;
+
+    const projectId = thread?.projectId ?? null;
+    const projectName = projectId === null ? null : (getProject(this.db, projectId)?.name ?? null);
+    const clock = promptClock(new Date(this.clock()));
+
+    return [
+      {
+        role: "system",
+        content: expandPromptVariables(assistant.systemPrompt, {
+          date: clock.date,
+          time: clock.time,
+          threadTitle: thread?.title ?? "",
+          projectName,
+        }),
+      },
+      ...history,
+    ];
   }
 
   /**
@@ -280,11 +426,12 @@ export class GenerationService {
       threadId: string;
       assistantMessageId: string;
       model: string;
+      temperature: number | undefined;
       history: ChatMessage[];
     },
     sink: GenerationSink,
   ): void {
-    const { generationId, threadId, assistantMessageId, model, history } = input;
+    const { generationId, threadId, assistantMessageId, model, temperature, history } = input;
 
     const controller = new AbortController();
     const unsubscribe = this.bus.subscribe(generationId, sink);
@@ -307,6 +454,7 @@ export class GenerationService {
       threadId,
       assistantMessageId,
       model,
+      temperature,
       history,
       signal: controller.signal,
       release,
@@ -378,6 +526,7 @@ export class GenerationService {
         model: context.model,
         messages: context.history,
         signal: context.signal,
+        ...(context.temperature === undefined ? {} : { temperature: context.temperature }),
         ...(this.deps.fetchImpl === undefined ? {} : { fetchImpl: this.deps.fetchImpl }),
         onDelta: (delta) => {
           switch (delta.type) {
