@@ -234,6 +234,44 @@ export const contracts = {
     request: z.object({ threadId: z.uuid() }),
     response: z.object({ ok: z.literal(true) }),
   },
+
+  /* --------------------------------------------------- P0 provider settings */
+
+  "settings.get": {
+    request: z.object({}),
+    response: z.object({
+      /** Null means "not configured"; the resolver falls back to env, then mock, then a clear error. */
+      baseUrl: z.string().nullable(),
+      defaultModel: z.string().nullable(),
+      hasKey: z.boolean(),
+      /** Last four only. The key itself never appears in any response. */
+      masked: z.string().nullable(),
+    }),
+  },
+
+  "settings.set": {
+    request: z.object({
+      baseUrl: z.string().max(500).nullable().optional(),
+      defaultModel: z.string().max(200).nullable().optional(),
+    }),
+    response: z.object({
+      baseUrl: z.string().nullable(),
+      defaultModel: z.string().nullable(),
+      hasKey: z.boolean(),
+      masked: z.string().nullable(),
+    }),
+  },
+
+  "models.list": {
+    request: z.object({}),
+    response: z.object({
+      models: z.array(z.object({ id: z.string(), ownedBy: z.string().nullable() })),
+      /** Where the list came from, so the UI can say so instead of implying authority. */
+      source: z.enum(["remote", "fallback", "mock"]),
+      /** Populated when the remote call failed and a fallback was used. */
+      message: z.string().nullable(),
+    }),
+  },
 } as const satisfies Record<ChannelName, Contract>;
 
 export type Contracts = typeof contracts;

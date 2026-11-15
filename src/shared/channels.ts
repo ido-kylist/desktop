@@ -10,7 +10,7 @@
  * every channel listed here has a schema. Adding a name without a schema is a
  * compile error, so the two halves cannot drift.
  */
-export const PROTOCOL_VERSION = 4 as const;
+export const PROTOCOL_VERSION = 5 as const;
 
 export const CHANNEL_NAMES = [
   "app.info",
@@ -27,6 +27,9 @@ export const CHANNEL_NAMES = [
   "threads.list",
   "threads.update",
   "threads.delete",
+  "settings.get",
+  "settings.set",
+  "models.list",
 ] as const;
 
 export type ChannelName = (typeof CHANNEL_NAMES)[number];
