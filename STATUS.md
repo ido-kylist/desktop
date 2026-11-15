@@ -17,7 +17,7 @@ The only coordination surface. If it is not here, it is not agreed.
 | D10 Hardening | G10 | evidence in progress |
 | D11 Release | G11 | **passed** — `gates/G11.md` |
 
-**Release:** <https://github.com/idoavnon/../releases/tag/v0.1.0> — `Cleon-0.1.0-arm64.dmg`, unsigned,
+**Release:** <https://github.com/ido-kylist/desktop/releases/tag/v0.1.0> — `Cleon-0.1.0-arm64.dmg`, unsigned,
 `xattr -dr com.apple.quarantine` documented. The installed bundle is tested for a real chat turn,
 not just a boot.
 
