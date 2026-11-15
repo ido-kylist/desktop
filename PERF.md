@@ -90,3 +90,10 @@ is the distance above that.
   the IPC side, and the frame proxy covers scrolling a windowed list, not first paint.
 - **WAL, not a fresh disk.** The database is opened with the app's pragmas (WAL,
   `synchronous = NORMAL`), so writes are not part of these numbers at all.
+
+## Where the other measurements live
+
+This file is latency over a synthetic corpus. Memory over time is `docs/SOAK.md`
+(`node scripts/soak.mjs`), and the UI state matrix is `docs/STATES.md`. The three do not
+overlap: a fast query says nothing about whether the process grows, and neither says anything
+about what a user sees when a read fails.

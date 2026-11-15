@@ -12,3 +12,4 @@ test-results/
 *.tsbuildinfo
 drizzle/meta/_journal.json.bak
 scripts/perf/.build/
+scripts/soak/.build/
