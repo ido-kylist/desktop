@@ -28,24 +28,46 @@ export interface InferenceConfig {
 }
 
 /**
- * Where inference lives, in priority order: an explicit override, then the local
- * mock while unpackaged, then a hard failure.
+ * Where inference lives, in priority order: an explicit environment override, then
+ * what the settings screen stored, then the local mock while unpackaged, then a hard
+ * failure.
+ *
+ * The environment comes first because it is how a developer or CI points a build at
+ * a specific server for one run, and a stored value must not be able to fight that.
+ * The stored value comes next because it is the one the user actually chose.
  *
  * The packaged case deliberately throws rather than falling back to the mock: a
- * shipped build that quietly talks to 127.0.0.1 would look like a working app
- * while answering from a fixture, and nothing downstream could tell the
- * difference. `INTERNAL` because it is a misconfiguration of this app, not an
- * upstream fault. The raw `process.env` is read by the caller, so this stays a
- * pure function of its inputs.
+ * shipped build that quietly talks to 127.0.0.1 would look like a working app while
+ * answering from a fixture, and nothing downstream could tell the difference.
+ * `INTERNAL` because it is a misconfiguration of this app, not an upstream fault —
+ * and the message names the fix, because it is rendered to a person who has to make
+ * one. The stored value is injected rather than read here, so this stays a pure
+ * function of its inputs.
  */
 export function resolveBaseUrl(input: {
   isPackaged: boolean;
   env: Record<string, string | undefined>;
+  /** What `settings.base_url` holds, when the caller has already read it. */
+  storedBaseUrl?: string | null;
 }): string {
-  const configured = input.env.CLEON_API_BASE?.trim() ?? "";
-  if (configured !== "") return configured.replace(/\/+$/, "");
+  const configured = normaliseUrl(input.env.CLEON_API_BASE);
+  if (configured !== null) return configured;
+
+  const stored = normaliseUrl(input.storedBaseUrl);
+  if (stored !== null) return stored;
+
   if (!input.isPackaged) return MOCK_BASE_URL;
-  throw new AppError("INTERNAL", "no inference base URL configured");
+  throw new AppError("INTERNAL", "No provider configured. Open Settings and add your base URL.");
+}
+
+/**
+ * A URL, or null when there is nothing usable. Blank and whitespace-only values are
+ * "unset" rather than "configured to nothing", and the trailing slash is dropped so
+ * paths can be appended without doubling it.
+ */
+function normaliseUrl(raw: string | null | undefined): string | null {
+  const value = raw?.trim() ?? "";
+  return value === "" ? null : value.replace(/\/+$/, "");
 }
 
 export interface ChatMessage {
