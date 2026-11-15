@@ -14,7 +14,6 @@ import {
   type RequestOf,
   type ResponseOf,
 } from "@shared/ipc-contract";
-import { eq } from "drizzle-orm";
 import {
   app,
   BrowserWindow,
@@ -28,11 +27,16 @@ import {
 } from "electron";
 import { GenerationBus } from "./api/bus.js";
 import { resolveBaseUrl } from "./api/client.js";
-import { GenerationService } from "./api/generations.js";
+import { GenerationService, type GenerationSink } from "./api/generations.js";
 import { createDb, type DrizzleDb } from "./db/client.js";
 import { countRows, defaultDbPath, hasFts5, openDatabase, schemaVersion } from "./db/index.js";
-import { getThreadWithMessages } from "./db/repo.js";
-import { generations as generationRows } from "./db/schema.js";
+import {
+  getThreadTree,
+  listThreads,
+  setActiveVariant,
+  softDeleteThread,
+  updateThread,
+} from "./db/repo.js";
 import { AppError, toIpcError } from "./errors.js";
 import { type SecretBackend, type SecretStore, SecretsService } from "./secrets.js";
 
@@ -164,60 +168,59 @@ function getGenerations(): GenerationService {
 }
 
 /**
- * The restore read (gate G1): one thread and its messages, oldest first.
+ * The restore read (gate G1) plus the D3 tree.
  *
- * `messages` carries no generation column — the link is `generations.message_id` —
- * but the renderer needs both the generation and its error code to render a turn it
- * did not watch. One extra read for the whole thread, keyed by message id, is
- * cheaper than a query per message.
+ * One repository call returns the messages, their sibling groups, the generation row
+ * behind each message, and the active leaf; the handler's added value is the
+ * contract's boundary types.
  *
- * A stored `error_code` that is not in the contract's closed set is reported as
- * null rather than passed through: the type is the boundary, and a database written
- * by a newer build must not crash an older renderer.
+ * A stored `error_code` that is not in the contract's closed set is reported as null
+ * rather than passed through: the type is the boundary, and a database written by a
+ * newer build must not crash an older renderer.
  */
 function readThread(threadId: string): ResponseOf<"chat.thread"> {
-  const found = getThreadWithMessages(getOrm(), threadId);
-  if (found === null) {
+  const tree = getThreadTree(getOrm(), threadId);
+  if (tree === null) {
     throw new AppError("NOT_FOUND", "thread not found", { details: { threadId } });
-  }
-
-  const rows = getOrm()
-    .select({
-      messageId: generationRows.messageId,
-      generationId: generationRows.id,
-      errorCode: generationRows.errorCode,
-    })
-    .from(generationRows)
-    .where(eq(generationRows.threadId, threadId))
-    .all();
-
-  const byMessage = new Map<string, { generationId: string; errorCode: ErrorCode | null }>();
-  for (const row of rows) {
-    if (row.messageId === null) continue;
-    const parsed = row.errorCode === null ? null : ErrorCodeSchema.safeParse(row.errorCode);
-    byMessage.set(row.messageId, {
-      generationId: row.generationId,
-      errorCode: parsed?.success === true ? parsed.data : null,
-    });
   }
 
   return {
     thread: {
-      id: found.thread.id,
-      title: found.thread.title,
-      updatedAt: found.thread.updatedAt,
+      id: tree.thread.id,
+      title: tree.thread.title,
+      updatedAt: tree.thread.updatedAt,
     },
-    messages: found.messages.map((message) => {
-      const generation = byMessage.get(message.id);
-      return {
-        id: message.id,
-        role: message.role,
-        text: message.text,
-        createdAt: message.createdAt,
-        generationId: generation?.generationId ?? null,
-        errorCode: generation?.errorCode ?? null,
-      };
-    }),
+    messages: tree.messages.map((message) => ({
+      id: message.id,
+      role: message.role,
+      text: message.text,
+      createdAt: message.createdAt,
+      generationId: message.generationId,
+      errorCode: toErrorCode(message.errorCode),
+      parentId: message.parentId,
+      variantOf: message.variantOf,
+      variants: message.variants,
+      usage: message.usage,
+    })),
+    activeLeafId: tree.activeLeafId,
+  };
+}
+
+function toErrorCode(raw: string | null): ErrorCode | null {
+  if (raw === null) return null;
+  const parsed = ErrorCodeSchema.safeParse(raw);
+  return parsed.success ? parsed.data : null;
+}
+
+/**
+ * A generation sink bound to one window.
+ *
+ * The window can close mid-answer. There is nothing left to tell, and sending to a
+ * destroyed webContents throws.
+ */
+function generationSink(sender: IpcMainInvokeEvent["sender"]): GenerationSink {
+  return (generationEvent) => {
+    if (!sender.isDestroyed()) sender.send(GENERATION_EVENT_CHANNEL, generationEvent);
   };
 }
 
@@ -272,18 +275,32 @@ const handlers: { [C in ChannelName]: Handler<C> } = {
     return { hasKey: false };
   },
 
-  "chat.send": (payload, event) => {
-    const sender = event.sender;
-    return getGenerations().send(payload, (generationEvent) => {
-      // The window can close mid-answer. There is nothing left to tell, and
-      // sending to a destroyed webContents throws.
-      if (!sender.isDestroyed()) sender.send(GENERATION_EVENT_CHANNEL, generationEvent);
-    });
-  },
+  "chat.send": (payload, event) => getGenerations().send(payload, generationSink(event.sender)),
 
   "chat.stop": ({ generationId }) => getGenerations().stop(generationId),
 
   "chat.thread": ({ threadId }) => readThread(threadId),
+
+  /** A sibling under the same parent, streamed by the same orchestrator as `chat.send`. */
+  "chat.regenerate": (payload, event) =>
+    getGenerations().regenerate(payload.messageId, generationSink(event.sender)),
+
+  "chat.setActiveVariant": ({ threadId, messageId }) => {
+    setActiveVariant(getOrm(), threadId, messageId);
+    return { ok: true };
+  },
+
+  "threads.list": (payload) => listThreads(getOrm(), payload),
+
+  "threads.update": (payload) => {
+    updateThread(getOrm(), payload);
+    return { ok: true };
+  },
+
+  "threads.delete": ({ threadId }) => {
+    softDeleteThread(getOrm(), threadId);
+    return { ok: true };
+  },
 };
 
 export function registerIpc(): void {

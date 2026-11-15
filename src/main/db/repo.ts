@@ -1,5 +1,7 @@
+import { randomUUID } from "node:crypto";
 import type { ErrorCode } from "@shared/ipc-contract";
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
+import { AppError } from "../errors.js";
 import type { DrizzleDb } from "./client.js";
 import { generations, type Message, messages, type Thread, threads } from "./schema.js";
 
@@ -45,6 +47,12 @@ export interface InsertMessageInput {
   role: "user" | "assistant" | "system" | "tool";
   text: string;
   model?: string | null;
+  /**
+   * The message this row regenerates, when it is a variant rather than a fresh
+   * turn. Sibling grouping itself is by `parent_id`; this is only the pointer back
+   * to the specific message the user asked to replace.
+   */
+  variantOf?: string | null;
 }
 
 export function insertMessage(db: DrizzleDb, input: InsertMessageInput): void {
@@ -56,6 +64,7 @@ export function insertMessage(db: DrizzleDb, input: InsertMessageInput): void {
       role: input.role,
       text: input.text,
       ...(input.model === undefined ? {} : { model: input.model }),
+      ...(input.variantOf === undefined ? {} : { variantOf: input.variantOf }),
     })
     .run();
 }
@@ -143,4 +152,536 @@ export function getThreadWithMessages(db: DrizzleDb, threadId: string): ThreadWi
     .all();
 
   return { thread, messages: rows };
+}
+
+/* ------------------------------------------------------------ D2: the list */
+
+export interface ListThreadsInput {
+  /** FTS5 term; empty or undefined means "everything". */
+  query?: string | undefined;
+  limit: number;
+  offset: number;
+  includeArchived: boolean;
+}
+
+/** Row-for-row the `threads.list` item shape, so the handler is a pass-through. */
+export interface ThreadListItem {
+  id: string;
+  title: string;
+  updatedAt: string;
+  pinned: boolean;
+  archivedAt: string | null;
+  messageCount: number;
+  snippet: string | null;
+}
+
+export interface ListThreadsResult {
+  items: ThreadListItem[];
+  total: number;
+}
+
+interface ThreadListRow {
+  id: string;
+  title: string;
+  updated_at: string;
+  pinned: number;
+  archived_at: string | null;
+  message_count: number;
+  snippet: string | null;
+}
+
+/**
+ * Turns a user's search box into an FTS5 query that cannot be an operator.
+ *
+ * FTS5's MATCH language is a parser: `jumps AND` and a stray quote are syntax
+ * errors, and the query string comes from a text field, so passing it through is
+ * a crash waiting for punctuation. Each whitespace-separated token is wrapped in
+ * double quotes (with embedded quotes doubled, which is how FTS5 escapes them) and
+ * the phrases are joined by whitespace — FTS5's implicit AND. A token with no
+ * searchable characters becomes an empty phrase, which matches nothing rather than
+ * throwing.
+ */
+function toFtsMatch(term: string): string {
+  return term
+    .trim()
+    .split(/\s+/)
+    .filter((token) => token !== "")
+    .map((token) => `"${token.replace(/"/g, '""')}"`)
+    .join(" ");
+}
+
+/**
+ * The sidebar read: one page of threads, plus the total the page was cut from.
+ *
+ * Both halves are SQL over the same predicate — the `items.length` is not the
+ * total, and nothing is filtered in JavaScript. The search branch joins the FTS5
+ * index to `messages` to `threads` and ranks by `bm25()`; the plain branch is the
+ * pinned-first recency order the sidebar uses when there is no query.
+ *
+ * `bm25()` and `snippet()` are FTS5 auxiliary functions and SQLite only allows them
+ * where the virtual table is queried directly — not under `GROUP BY`, and not in a
+ * correlated subquery. That is why the search branch computes both in a CTE over
+ * the FTS table first and only then reduces one row per thread: the outer query
+ * sees them as ordinary columns.
+ */
+export function listThreads(db: DrizzleDb, input: ListThreadsInput): ListThreadsResult {
+  const includeArchived = input.includeArchived ? 1 : 0;
+  const term = input.query?.trim() ?? "";
+
+  if (term === "") {
+    const items = db
+      .all<ThreadListRow>(sql`
+        SELECT
+          t.id            AS id,
+          t.title         AS title,
+          t.updated_at    AS updated_at,
+          t.pinned        AS pinned,
+          t.archived_at   AS archived_at,
+          (SELECT COUNT(*) FROM messages AS mc
+            WHERE mc.thread_id = t.id AND mc.deleted_at IS NULL) AS message_count,
+          NULL            AS snippet
+        FROM threads AS t
+        WHERE t.deleted_at IS NULL
+          AND (${includeArchived} = 1 OR t.archived_at IS NULL)
+        ORDER BY t.pinned DESC, t.updated_at DESC
+        LIMIT ${input.limit} OFFSET ${input.offset}
+      `)
+      .map(toThreadListItem);
+
+    const total = db.get<{ n: number }>(sql`
+      SELECT COUNT(*) AS n
+      FROM threads AS t
+      WHERE t.deleted_at IS NULL
+        AND (${includeArchived} = 1 OR t.archived_at IS NULL)
+    `);
+
+    return { items, total: total?.n ?? 0 };
+  }
+
+  const match = toFtsMatch(term);
+
+  const items = db
+    .all<ThreadListRow>(sql`
+      WITH hits AS (
+        SELECT
+          m.thread_id                        AS thread_id,
+          bm25(messages_fts)                 AS rank,
+          snippet(messages_fts, 1, '[', ']', '…', 12) AS snippet,
+          m.id                               AS message_id
+        FROM messages_fts
+        JOIN messages AS m ON m.id = messages_fts.message_id
+        JOIN threads  AS t ON t.id = m.thread_id
+        WHERE messages_fts MATCH ${match}
+          AND m.deleted_at IS NULL
+          AND t.deleted_at IS NULL
+          AND (${includeArchived} = 1 OR t.archived_at IS NULL)
+      ),
+      best AS (
+        SELECT
+          thread_id,
+          rank,
+          snippet,
+          ROW_NUMBER() OVER (PARTITION BY thread_id ORDER BY rank ASC, message_id ASC) AS rn
+        FROM hits
+      )
+      SELECT
+        t.id            AS id,
+        t.title         AS title,
+        t.updated_at    AS updated_at,
+        t.pinned        AS pinned,
+        t.archived_at   AS archived_at,
+        (SELECT COUNT(*) FROM messages AS mc
+          WHERE mc.thread_id = t.id AND mc.deleted_at IS NULL) AS message_count,
+        b.snippet       AS snippet
+      FROM best AS b
+      JOIN threads AS t ON t.id = b.thread_id
+      WHERE b.rn = 1
+      ORDER BY b.rank ASC, t.updated_at DESC
+      LIMIT ${input.limit} OFFSET ${input.offset}
+    `)
+    .map(toThreadListItem);
+
+  const total = db.get<{ n: number }>(sql`
+    WITH hits AS (
+      SELECT m.thread_id AS thread_id
+      FROM messages_fts
+      JOIN messages AS m ON m.id = messages_fts.message_id
+      JOIN threads  AS t ON t.id = m.thread_id
+      WHERE messages_fts MATCH ${match}
+        AND m.deleted_at IS NULL
+        AND t.deleted_at IS NULL
+        AND (${includeArchived} = 1 OR t.archived_at IS NULL)
+    )
+    SELECT COUNT(*) AS n
+    FROM (SELECT thread_id FROM hits GROUP BY thread_id)
+  `);
+
+  return { items, total: total?.n ?? 0 };
+}
+
+function toThreadListItem(row: ThreadListRow): ThreadListItem {
+  return {
+    id: row.id,
+    title: row.title,
+    updatedAt: row.updated_at,
+    // SQLite has no boolean: the column is 0/1 and the contract says boolean.
+    pinned: row.pinned !== 0,
+    archivedAt: row.archived_at,
+    messageCount: row.message_count,
+    snippet: row.snippet,
+  };
+}
+
+/* ---------------------------------------------------------- D2: the writes */
+
+export interface UpdateThreadInput {
+  threadId: string;
+  title?: string | undefined;
+  pinned?: boolean | undefined;
+  archived?: boolean | undefined;
+}
+
+/**
+ * Renames, pins, or archives. Each field is independent; `updated_at` always moves
+ * because every one of these is a user edit and the sidebar's order is by it.
+ *
+ * `.returning()` rather than a preceding SELECT: the "did this row exist" question
+ * is answered by the write itself, so a thread deleted between the two statements
+ * cannot be updated behind its own tombstone.
+ */
+export function updateThread(db: DrizzleDb, input: UpdateThreadInput): void {
+  const patch: Partial<Pick<Thread, "title" | "pinned" | "archivedAt" | "updatedAt">> = {
+    updatedAt: new Date().toISOString(),
+  };
+  if (input.title !== undefined) patch.title = input.title;
+  if (input.pinned !== undefined) patch.pinned = input.pinned;
+  if (input.archived !== undefined)
+    patch.archivedAt = input.archived ? new Date().toISOString() : null;
+
+  const updated = db
+    .update(threads)
+    .set(patch)
+    .where(and(eq(threads.id, input.threadId), isNull(threads.deletedAt)))
+    .returning({ id: threads.id })
+    .all();
+
+  if (updated.length === 0) {
+    throw new AppError("NOT_FOUND", "thread not found", { details: { threadId: input.threadId } });
+  }
+}
+
+/**
+ * The tombstone. Rows are never physically removed: `messages` and `generations`
+ * cascade off `threads`, so a hard delete would take the generation history with it,
+ * and a thread the user "deleted" a second ago is exactly what they may want back.
+ *
+ * An already-deleted thread is NOT_FOUND, not a silent success: the caller asked to
+ * delete something that is not there any more, and the guard is in the WHERE clause
+ * so two concurrent deletes cannot both believe they won.
+ */
+export function softDeleteThread(db: DrizzleDb, threadId: string): void {
+  const deleted = db
+    .update(threads)
+    .set({ deletedAt: new Date().toISOString() })
+    .where(and(eq(threads.id, threadId), isNull(threads.deletedAt)))
+    .returning({ id: threads.id })
+    .all();
+
+  if (deleted.length === 0) {
+    throw new AppError("NOT_FOUND", "thread not found", { details: { threadId } });
+  }
+}
+
+/* --------------------------------------------------------- D3: the variant */
+
+export interface RegenerateResult {
+  threadId: string;
+  /** The message being answered again — the new assistant row's parent. */
+  userMessageId: string;
+  assistantMessageId: string;
+  generationId: string;
+}
+
+/**
+ * Regenerates an assistant message by adding a sibling under the same parent.
+ *
+ * Branching is native here (schema v1): the old answer is not overwritten, it
+ * becomes one variant and the new row becomes another, so "2 / 3" has something to
+ * count and the user can go back. That is also why this is a *new* message with a
+ * *new* generation row rather than a rewrite: the previous answer's usage and error
+ * code are evidence, not scratch space.
+ *
+ * The caller starts the stream; this only makes the rows durable first, in the same
+ * order `chat.send` uses — message, generation, thread touch — so a crash between
+ * the two leaves a resumable turn rather than a message with no generation.
+ *
+ * A missing id, a non-assistant row, or an assistant row with no parent (which
+ * `chat.send` never writes) is BAD_REQUEST: the request named a message this
+ * operation has no meaning for.
+ */
+export function regenerate(db: DrizzleDb, messageId: string): RegenerateResult {
+  const original = getMessage(db, messageId);
+  if (original === null || original.deletedAt !== null) {
+    throw new AppError("BAD_REQUEST", "message not found", { details: { messageId } });
+  }
+  if (original.role !== "assistant") {
+    throw new AppError("BAD_REQUEST", "only an assistant message can be regenerated", {
+      details: { messageId, role: original.role },
+    });
+  }
+  if (original.parentId === null) {
+    throw new AppError("BAD_REQUEST", "assistant message has no parent to answer", {
+      details: { messageId },
+    });
+  }
+
+  const parentId = original.parentId;
+  const threadId = original.threadId;
+  const assistantMessageId = randomUUID();
+  const generationId = randomUUID();
+
+  db.transaction((tx) => {
+    insertMessage(tx, {
+      id: assistantMessageId,
+      threadId,
+      parentId,
+      role: "assistant",
+      text: "",
+      model: original.model,
+      variantOf: original.id,
+    });
+    insertGeneration(tx, {
+      id: generationId,
+      threadId,
+      messageId: assistantMessageId,
+      // `messages.model` is nullable and `generations.model` is not. A regenerated
+      // turn runs with the model of the answer it replaces; an empty string is the
+      // honest record of "this row never carried one" rather than inventing a name.
+      model: original.model ?? "",
+    });
+    // The new answer is what the user is looking at, so it becomes the active leaf:
+    // the next turn hangs under it, not under the variant it just superseded.
+    tx.update(threads)
+      .set({ activeLeafId: assistantMessageId })
+      .where(eq(threads.id, threadId))
+      .run();
+    touchThread(tx, threadId);
+  });
+
+  return { threadId, userMessageId: parentId, assistantMessageId, generationId };
+}
+
+/**
+ * Selects which variant the thread shows.
+ *
+ * The message has to be live and belong to the thread: a leaf id from another
+ * conversation would silently jump the user into somebody else's history, and a
+ * soft-deleted row would point the path at a message the read filters out anyway.
+ *
+ * `updated_at` is deliberately untouched. Switching which branch you are reading is
+ * a view action; moving the thread to the top of the sidebar for it would make the
+ * list reorder itself under the user's cursor.
+ */
+export function setActiveVariant(db: DrizzleDb, threadId: string, messageId: string): void {
+  const thread = db
+    .select({ id: threads.id })
+    .from(threads)
+    .where(and(eq(threads.id, threadId), isNull(threads.deletedAt)))
+    .get();
+
+  if (thread === undefined) {
+    throw new AppError("NOT_FOUND", "thread not found", { details: { threadId } });
+  }
+
+  const message = getMessage(db, messageId);
+  if (message === null || message.deletedAt !== null || message.threadId !== threadId) {
+    throw new AppError("NOT_FOUND", "message not found in thread", {
+      details: { threadId, messageId },
+    });
+  }
+
+  db.update(threads).set({ activeLeafId: messageId }).where(eq(threads.id, threadId)).run();
+}
+
+/* ---------------------------------------------------------- D3: the tree --- */
+
+export function getMessage(db: DrizzleDb, messageId: string): Message | null {
+  const row = db.select().from(messages).where(eq(messages.id, messageId)).get();
+  return row ?? null;
+}
+
+/**
+ * Root -> leaf for the thread's active variant.
+ *
+ * Resolution: an explicitly selected leaf if it is still live and in this thread,
+ * otherwise the newest live message. Walk `parent_id` upwards, then reverse; the
+ * walk stops on a repeated id so a corrupt parent cycle degrades to a truncated path
+ * instead of hanging the main process.
+ */
+export function resolveActivePath(loaded: ThreadWithMessages): Message[] {
+  const byId = new Map(loaded.messages.map((message) => [message.id, message]));
+  const stored = loaded.thread.activeLeafId;
+  const selected = stored === null ? undefined : byId.get(stored);
+  const leaf = selected ?? loaded.messages.at(-1);
+  return leaf === undefined ? [] : pathTo(byId, leaf);
+}
+
+/** Root -> `leafId` inclusive, the prompt an answer to that message was given. */
+export function resolveAncestorPath(loaded: ThreadWithMessages, leafId: string): Message[] {
+  const byId = new Map(loaded.messages.map((message) => [message.id, message]));
+  const leaf = byId.get(leafId);
+  return leaf === undefined ? [] : pathTo(byId, leaf);
+}
+
+function pathTo(byId: Map<string, Message>, leaf: Message): Message[] {
+  const path: Message[] = [];
+  const seen = new Set<string>();
+  let current: Message | undefined = leaf;
+
+  while (current !== undefined && !seen.has(current.id)) {
+    seen.add(current.id);
+    path.push(current);
+    current = current.parentId === null ? undefined : byId.get(current.parentId);
+  }
+
+  return path.reverse();
+}
+
+export function getActivePath(db: DrizzleDb, threadId: string): Message[] {
+  const loaded = getThreadWithMessages(db, threadId);
+  return loaded === null ? [] : resolveActivePath(loaded);
+}
+
+export function getAncestorPath(db: DrizzleDb, threadId: string, leafId: string): Message[] {
+  const loaded = getThreadWithMessages(db, threadId);
+  return loaded === null ? [] : resolveAncestorPath(loaded, leafId);
+}
+
+export interface GenerationUsage {
+  promptTokens: number;
+  completionTokens: number;
+  costMicrocents: number;
+}
+
+/** One message as the tree read reports it, before the contract's boundary types. */
+export interface ThreadMessageNode {
+  id: string;
+  role: Message["role"];
+  text: string;
+  createdAt: string;
+  parentId: string | null;
+  variantOf: string | null;
+  /**
+   * Every live sibling that shares this message's parent, oldest first, **including
+   * this message**. The UI needs the whole set to place itself ("2 / 3") and the
+   * count is the same number either way, so self-inclusion saves it a merge.
+   */
+  variants: string[];
+  generationId: string | null;
+  errorCode: string | null;
+  usage: GenerationUsage | null;
+}
+
+export interface ThreadTree {
+  thread: Thread;
+  messages: ThreadMessageNode[];
+  /**
+   * The selected leaf, or null when none was selected or the stored one is gone.
+   * Null is not "no messages" — it is "follow the newest leaf".
+   */
+  activeLeafId: string | null;
+}
+
+/**
+ * The `chat.thread` read, now with tree metadata.
+ *
+ * Sibling groups are built from the thread's own messages, which are already loaded
+ * in insertion order, so they inherit that order: `created_at` with `rowid` as the
+ * tiebreaker. Two variants created in the same millisecond are the normal case (a
+ * regenerate writes the message and its generation back to back), which is why the
+ * tiebreaker is not optional here.
+ */
+export function getThreadTree(db: DrizzleDb, threadId: string): ThreadTree | null {
+  const loaded = getThreadWithMessages(db, threadId);
+  if (loaded === null) return null;
+
+  const generationsByMessage = readGenerations(db, threadId);
+  const siblings = new Map<string | null, string[]>();
+  for (const message of loaded.messages) {
+    const group = siblings.get(message.parentId);
+    if (group === undefined) siblings.set(message.parentId, [message.id]);
+    else group.push(message.id);
+  }
+
+  const liveIds = new Set(loaded.messages.map((message) => message.id));
+  const stored = loaded.thread.activeLeafId;
+
+  return {
+    thread: loaded.thread,
+    activeLeafId: stored !== null && liveIds.has(stored) ? stored : null,
+    messages: loaded.messages.map((message) => {
+      const generation = generationsByMessage.get(message.id);
+      return {
+        id: message.id,
+        role: message.role,
+        text: message.text,
+        createdAt: message.createdAt,
+        parentId: message.parentId,
+        variantOf: message.variantOf,
+        variants: siblings.get(message.parentId) ?? [message.id],
+        generationId: generation?.id ?? null,
+        errorCode: generation?.errorCode ?? null,
+        usage:
+          generation === undefined
+            ? null
+            : {
+                promptTokens: generation.promptTokens,
+                completionTokens: generation.completionTokens,
+                costMicrocents: generation.costMicrocents,
+              },
+      };
+    }),
+  };
+}
+
+interface GenerationForMessage {
+  id: string;
+  errorCode: string | null;
+  promptTokens: number;
+  completionTokens: number;
+  costMicrocents: number;
+}
+
+/**
+ * One read for the whole thread rather than one per message. If a message somehow
+ * carries more than one generation row, the last one written wins — it is the one
+ * that produced the text on screen.
+ */
+function readGenerations(db: DrizzleDb, threadId: string): Map<string, GenerationForMessage> {
+  const rows = db
+    .select({
+      id: generations.id,
+      messageId: generations.messageId,
+      errorCode: generations.errorCode,
+      promptTokens: generations.promptTokens,
+      completionTokens: generations.completionTokens,
+      costMicrocents: generations.costMicrocents,
+    })
+    .from(generations)
+    .where(eq(generations.threadId, threadId))
+    .orderBy(asc(generations.startedAt), sql`"generations"."rowid"`)
+    .all();
+
+  const byMessage = new Map<string, GenerationForMessage>();
+  for (const row of rows) {
+    if (row.messageId === null) continue;
+    byMessage.set(row.messageId, {
+      id: row.id,
+      errorCode: row.errorCode,
+      promptTokens: row.promptTokens,
+      completionTokens: row.completionTokens,
+      costMicrocents: row.costMicrocents,
+    });
+  }
+  return byMessage;
 }

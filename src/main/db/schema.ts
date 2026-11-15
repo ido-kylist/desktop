@@ -15,6 +15,12 @@ export const threads = sqliteTable(
     projectId: text("project_id"),
     pinned: integer("pinned", { mode: "boolean" }).notNull().default(false),
     archivedAt: text("archived_at"),
+    /**
+     * Migration 2. The leaf whose ancestor path is the visible conversation;
+     * null means "follow the newest leaf". See `migrations.ts` for why it carries
+     * no foreign key.
+     */
+    activeLeafId: text("active_leaf_id"),
     createdAt: text("created_at").notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
     updatedAt: text("updated_at").notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
     deletedAt: text("deleted_at"),
