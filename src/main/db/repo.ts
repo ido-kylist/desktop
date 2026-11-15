@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
-import type { ErrorCode } from "@shared/ipc-contract";
+import type { Citation, ErrorCode } from "@shared/ipc-contract";
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { AppError } from "../errors.js";
 import type { DrizzleDb } from "./client.js";
+import { parseCitations } from "./repo-knowledge.js";
 import { generations, type Message, messages, settings, type Thread, threads } from "./schema.js";
 
 /**
@@ -83,6 +84,11 @@ export interface InsertMessageInput {
    * to the specific message the user asked to replace.
    */
   variantOf?: string | null;
+  /**
+   * D8: the chunks this answer was grounded on. Written once, when the row is created —
+   * the citation list is a fact about the turn, not something a later write revises.
+   */
+  citations?: readonly Citation[] | undefined;
 }
 
 export function insertMessage(db: DrizzleDb, input: InsertMessageInput): void {
@@ -95,6 +101,9 @@ export function insertMessage(db: DrizzleDb, input: InsertMessageInput): void {
       text: input.text,
       ...(input.model === undefined ? {} : { model: input.model }),
       ...(input.variantOf === undefined ? {} : { variantOf: input.variantOf }),
+      ...(input.citations === undefined || input.citations.length === 0
+        ? {}
+        : { citationsJson: JSON.stringify(input.citations) }),
     })
     .run();
 }
@@ -636,6 +645,11 @@ export interface ThreadMessageNode {
   generationId: string | null;
   errorCode: string | null;
   usage: GenerationUsage | null;
+  /**
+   * D8: what this answer was grounded on, in marker order. Empty when the turn used no
+   * knowledge — the boundary leaves it out in that case, as it does for attachments.
+   */
+  citations: Citation[];
 }
 
 export interface ThreadTree {
@@ -695,6 +709,7 @@ export function getThreadTree(db: DrizzleDb, threadId: string): ThreadTree | nul
                 completionTokens: generation.completionTokens,
                 costMicrocents: generation.costMicrocents,
               },
+        citations: parseCitations(message.citationsJson),
       };
     }),
   };
@@ -745,22 +760,29 @@ function readGenerations(db: DrizzleDb, threadId: string): Map<string, Generatio
 /* ------------------------------------------------------- P0: the settings */
 
 /**
- * The two keys the provider settings screen owns.
+ * The three keys the provider settings screen owns.
  *
  * Column names, not TypeScript names, because they are the durable half: a rename
  * here is a data migration for every user who already saved a URL.
  */
 const BASE_URL_KEY = "base_url";
 const DEFAULT_MODEL_KEY = "default_model";
+/** D8: the model retrieval embeds with. Blank/absent means the default, not "no model". */
+const EMBEDDING_MODEL_KEY = "embedding_model";
 
 export interface StoredSettings {
   /** Null means "never configured" — the resolver decides what that implies. */
   baseUrl: string | null;
   defaultModel: string | null;
+  /**
+   * D8: never null. A knowledge base needs an embedding model to answer at all, and "not
+   * configured" is not a state search can be in — the caller applies the default.
+   */
+  embeddingModel: string | null;
 }
 
 /**
- * Both keys in one read.
+ * All three keys in one read.
  *
  * The filter is explicit rather than `SELECT *`: a future setting that belongs to
  * another screen must not appear in this response, and the contract has no field
@@ -770,13 +792,14 @@ export function getSettings(db: DrizzleDb): StoredSettings {
   const rows = db
     .select({ key: settings.key, value: settings.value })
     .from(settings)
-    .where(inArray(settings.key, [BASE_URL_KEY, DEFAULT_MODEL_KEY]))
+    .where(inArray(settings.key, [BASE_URL_KEY, DEFAULT_MODEL_KEY, EMBEDDING_MODEL_KEY]))
     .all();
 
   const byKey = new Map(rows.map((row) => [row.key, row.value]));
   return {
     baseUrl: byKey.get(BASE_URL_KEY) ?? null,
     defaultModel: byKey.get(DEFAULT_MODEL_KEY) ?? null,
+    embeddingModel: byKey.get(EMBEDDING_MODEL_KEY) ?? null,
   };
 }
 
@@ -788,6 +811,7 @@ export function getSettings(db: DrizzleDb): StoredSettings {
 export interface SettingsPatch {
   baseUrl?: string | null | undefined;
   defaultModel?: string | null | undefined;
+  embeddingModel?: string | null | undefined;
 }
 
 /**
@@ -817,6 +841,7 @@ export function setSettings(db: DrizzleDb, patch: SettingsPatch): StoredSettings
 
   absorb(BASE_URL_KEY, patch.baseUrl);
   absorb(DEFAULT_MODEL_KEY, patch.defaultModel);
+  absorb(EMBEDDING_MODEL_KEY, patch.embeddingModel);
 
   db.transaction((tx) => {
     if (writes.length > 0) {

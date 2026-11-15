@@ -290,3 +290,154 @@ declares no channel to list them back, so a relaunch forgets what the panel was 
 Reading history back is in `BACKLOG.md` rather than faked behind a list that would be a
 subset of the truth. Status is likewise not pushed: the panel re-reads on every action and
 on a Refresh button, which is honest about being a read.
+
+## D8 — knowledge and versioned artifacts: retrieval, citations, and an append-only record
+
+**Protocol 8 → 9, schema 6 → 7.** Eight channels added: `kb.addDocument`, `kb.listDocuments`,
+`kb.deleteDocument`, `kb.search`, `kb.readChunk`, and `artifacts.list`, `artifacts.get`,
+`artifacts.save`. Three widened: `chat.send` gained `useKnowledge`, `documentIds` and a
+`citations` response field, `chat.thread` reports `citations` per message, and
+`settings.get` / `settings.set` gained `embeddingModel`. Migration 7 adds `documents`,
+`chunks`, `artifacts`, `artifact_versions`, and `messages.citations_json`.
+
+**Deviations from the brief, and why.**
+
+1. **A fifth channel, `kb.readChunk`.** The brief fixes a citation at `{chunkId, documentId,
+   documentTitle, ordinal}` and also asks chips to "expand to the source chunk text". Those
+   two cannot both hold without a way to read a chunk by id. The alternatives were worse:
+   adding `text` to the persisted citation duplicates up to 800 characters per citation, five
+   per message, on a row that is replayed on every `chat.thread`; and re-running the query
+   would answer a different question than the one the answer was written for. So the citation
+   stays a pointer and a chip fetches its text when it is opened — which also means a chunk
+   that has since been deleted reports NOT_FOUND instead of showing text that no longer
+   exists anywhere.
+
+2. **`chat.send` answers with `citations`.** The brief puts the citation list on
+   `chat.thread`, which is what a relaunch needs. Without the field on the send response the
+   chips would only appear after a reload — a live turn would look ungrounded while the row
+   under it said otherwise. The field is optional, so a turn with no knowledge is wire-identical
+   to before.
+
+3. **`messages.citations_json` is a column the brief's schema list did not include.** The
+   brief requires the citation list to be persisted on the assistant message and its table
+   list has no place for it. `content_blocks` was the other candidate, but its `kind` CHECK
+   has no member for a citation and adding one is a table rebuild. A nullable JSON column on
+   `messages` is the smallest honest change: it is a value of the message, read whole with
+   it, and never queried into — the same trade `mcp_servers.args_json` makes.
+
+4. **PDFs are refused, not indexed.** `kindForFilename` classifies `.pdf` as a document, but
+   its bytes are compressed streams and glyph indices. Decoding them as UTF-8 produces
+   mojibake that chunks, embeds and retrieves — all of it wrong, none of it detectable from
+   the result. Honest extraction needs a parser or OCR, neither of which is in the dependency
+   budget, so `.txt` and `.md` are indexable and a PDF is refused by name with
+   `reason: "not_readable_text"`. The caps and the extension table are still the attachment
+   module's (`isTooMany`, `isTooLarge`, `kindForFilename`), because a file this app will not
+   attach must not be a file it silently indexes.
+
+**Search is a linear scan, and that is the decision.** Retrieval reads every chunk whose
+vector is the same width as the query's, computes cosine, sorts, and takes k. It is O(n) in
+the corpus and it is the right complexity for a local knowledge base: tens of documents, a few
+thousand chunks, a scan measured in milliseconds. An ANN index (HNSW, IVF, `sqlite-vec`) is a
+second structure to build, persist, invalidate and explain, and it is **explicitly out of
+scope** for this slice. The seam is one function — `listChunksForSearch` — which is where an
+index would be introduced.
+
+**Vectors are normalized float32 in a BLOB, with the width stored beside them.** `dim` is a
+column rather than `byteLength / 4` because an empty or truncated blob must not read as a
+legal zero-width vector, and because a corpus embedded by one model has to be recognisable as
+incomparable with a query embedded by another. Search filters on `dim`; when there are chunks
+but none of the query's width, it is a CONFLICT naming the mismatch rather than an empty
+result. "Your documents do not mention that" and "your documents were embedded with a
+different model" are different answers, and only the second has a fix.
+
+**Embeddings go through the configured provider**, `POST {baseUrl}/v1/embeddings`, with the
+model from `settings.embedding_model` (default `text-embedding-3-small`). Same base URL and
+key as chat, resolved through the same `inferenceConfig()`: an embedding endpoint is part of
+the same provider, and two resolvers would eventually disagree about which endpoint is
+configured. Batches are 64 strings per request — the endpoint takes an array, so a forty-chunk
+document is one request rather than forty. Response order is restored from each item's `index`
+when the provider sends one: the specification allows any order, and a permuted batch would
+attach every chunk to the wrong vector, which reads as "search is bad" and is very hard to see.
+
+**Retrieval happens before the turn is written.** A knowledge-backed `chat.send` embeds the
+query and retrieves first, then persists the messages. An embedding provider that is down,
+misconfigured or rate-limited is therefore a refusal with nothing written, rather than a turn
+on screen whose answer was not the one that was asked for. The retrieval spec (the brief's
+decision 6) asked for the chunks "prepended to the system prompt": they are their own system
+message in front of the assistant's, so each stays legible and neither swallows the other's
+formatting, and the markers `[1]…[5]` are in the same order as the persisted citation list.
+
+**k = 5.** Five excerpts is small enough to read and large enough to answer from; it is
+`TOP_K` in `knowledge/service.ts` and the one number that would move first if answers look
+ungrounded or the prompt grows too fast.
+
+**`generate` does not retrieve.** A regenerated answer is a second answer to the same question
+with the same material; re-running retrieval against a corpus the user may have edited since
+would produce a "variant" that answers a different question. The original message's citations
+are left exactly as they were.
+
+**Chunking: 800 characters, 120 overlap, paragraphs first.** 800 characters is roughly 200
+tokens of English prose — two or three paragraphs, or one dense one. The overlap exists so a
+sentence that straddles a boundary appears whole in at least one window; without it "the total
+is 42" can split into "the total is" and "42" and neither retrieves well. Paragraphs are the
+preferred cut because prose is written in them; a single paragraph larger than the window is
+cut by character with the overlap applied. Lengths and cuts are in **code points**, not UTF-16
+units: `text.length` counts a surrogate pair as two, so a boundary computed on it can land
+between the halves of one emoji and produce two unpaired surrogates — the chunk, once embedded,
+would then be a different string than the one on disk.
+
+**`source_path` is unique.** Indexing the same file twice is the same text and a second bill
+from the embedding provider, so `kb.addDocument` reports the existing row as CONFLICT. An
+atomic replace (delete + insert in one transaction) is the affordance missing here and is in
+`BACKLOG.md`.
+
+**A batch is all or nothing.** Every file is validated, copied, chunked and embedded before
+any row is written, and the documents are inserted in one transaction. A batch that indexed
+three of five files and then failed would leave the panel saying "added 3" with no way to tell
+which two are missing — and a document whose copy was cleaned up would be a row that lists but
+never searches. When anything fails, the copies are removed; the list of copies is tracked
+separately from the sources because the read that can fail happens *after* the copy, and a
+cleanup list that only learned about a copy after the read left exactly that file on disk
+(caught by `tests/integration/knowledge.spec.ts` before the first commit).
+
+**Artifacts: a save appends.** `artifacts.current_version` names the newest row in
+`artifact_versions`, and nothing in the codebase updates or deletes a version row. That is what
+makes a version switcher a real affordance rather than a re-reading of one row. The bump is a
+single conditional `UPDATE … WHERE id = ? AND thread_id = ? AND current_version = ?` with
+`.returning()`: a preceding SELECT followed by an unconditional UPDATE is the classic lost
+update, and this cannot lose one. When the update matches nothing, a second read says which
+guard failed — NOT_FOUND for a wrong address, CONFLICT when the version moved and a retry is
+reasonable. The title travels with the save, because it is part of what the user edited.
+
+**An artifact belongs to a thread, and the thread is part of the address.** Saving with another
+thread's id is NOT_FOUND rather than CONFLICT: CONFLICT would confirm the id exists somewhere.
+A soft-deleted thread still accepts a save — the rows are the user's and the thread is only
+hidden from the sidebar — and the cascade from a really deleted thread takes its artifacts with
+it.
+
+**Ordering uses `rowid` as the tiebreaker.** Artifacts and documents are listed newest first by
+`created_at DESC, rowid DESC`. Two rows created in the same millisecond are the normal case
+(a batch add, a test), and ordering them by a random uuid makes the list reorder itself between
+two reads. A test that asserted "newest first" caught this on the first run.
+
+**A citation list that will not parse reads as none.** `citations_json` is written by this
+build, but a row from a newer build could carry a shape this one does not know, and a whole
+thread must not fail to load over one bad annotation. Anything that is not a list of four-field
+objects is dropped; the message still renders.
+
+**The renderer's knowledge toggle is per-turn state, not a setting.** It is not persisted, it is
+sent explicitly on every `chat.send` (including `false`), and it is disabled while a turn is in
+flight. A mode that survived a relaunch would silently keep searching a corpus the user forgot
+about, and a flag read mid-stream would describe a turn that had already started with a
+different value.
+
+**One existing test changed, and it is not a weakened gate.** `tests/integration/settings.spec.ts`
+and `tests/unit/settings-form.spec.ts` asserted exact shapes of the settings record, which now
+has a third key. Their claims — "a blank value is a clear", "the form drops a null base URL" —
+are unchanged; the fixtures gained `embeddingModel`, and a new case covers the new key's own
+round trip and clear. `tests/integration/migration-upgrade.spec.ts` gained an assertion that the
+v7 tables and `messages.citations_json` exist after upgrading a real v1 database, because
+`ALTER TABLE` on a legacy table is the one migration shape an existing database can reject.
+
+**No new dependency.** Chunking is a function over a string, cosine is a loop, the vector codec is
+`Buffer`, and the UI is components that were already there.

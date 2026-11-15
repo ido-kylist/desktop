@@ -20,6 +20,7 @@ import { type AssistantRow, getAssistant } from "../db/repo-assistants.js";
 import { assertProjectExists, getProject } from "../db/repo-projects.js";
 import type { Message, Thread } from "../db/schema.js";
 import { AppError, toIpcError } from "../errors.js";
+import type { KnowledgePrompt } from "../knowledge/service.js";
 import { expandPromptVariables, promptClock } from "../prompt-variables.js";
 import type { GenerationBus } from "./bus.js";
 import {
@@ -55,6 +56,17 @@ export interface GenerationDeps {
    * between turns. Also where an unconfigured base URL surfaces, as `INTERNAL`.
    */
   resolveConfig: () => Promise<InferenceConfig>;
+  /**
+   * D8: retrieval, when a turn asks for it. Optional because a build with no knowledge base
+   * (and every test that predates one) must still run a turn; when it is absent and a turn
+   * asks for knowledge, the request is refused rather than answered without context.
+   */
+  knowledge?: {
+    retrieve: (input: {
+      query: string;
+      documentIds?: readonly string[] | undefined;
+    }) => Promise<KnowledgePrompt | null>;
+  };
   /** Injected by tests. */
   fetchImpl?: typeof fetch;
   /** Milliseconds clock for checkpoint pacing. Injected so tests need no sleeps. */
@@ -239,6 +251,16 @@ export class GenerationService {
     const generationId = randomUUID();
 
     /**
+     * D8: retrieval runs **before** anything is written.
+     *
+     * That order is the decision: an embedding provider that is down, misconfigured, or
+     * rate-limited is a refusal the user should see, and the honest place for it is before
+     * the turn exists. The alternative — persist, then discover the turn has no context —
+     * leaves a message on screen whose answer was not the one that was asked for.
+     */
+    const knowledge = await this.retrieveKnowledge(request);
+
+    /**
      * A project only applies to a thread that does not exist yet: filing an existing
      * conversation under a project on every send would let the sidebar's filter move
      * threads the user never touched.
@@ -277,6 +299,7 @@ export class GenerationService {
         role: "assistant",
         text: "",
         model,
+        ...(knowledge === null ? {} : { citations: knowledge.citations }),
       });
       insertGeneration(tx, {
         id: generationId,
@@ -292,9 +315,18 @@ export class GenerationService {
      * a new thread's title is the database's default, and `{{thread_title}}` has to
      * expand to the row the user is actually in rather than to a guess made before it
      * was written.
+     *
+     * D8: the knowledge block goes in front of the assistant's system prompt, so the
+     * retrieval instructions are the first thing the model reads and the assistant's own
+     * persona cannot come between it and its sources.
      */
     const stored = getThread(this.db, threadId);
-    const history = this.withAssistantPrompt(assistant, stored, toChatMessages(path, request.text));
+    const history = this.buildPrompt({
+      assistant,
+      thread: stored,
+      knowledge,
+      history: toChatMessages(path, request.text),
+    });
 
     this.startTurn(
       {
@@ -308,7 +340,13 @@ export class GenerationService {
       sink,
     );
 
-    return { threadId, userMessageId, assistantMessageId, generationId };
+    return {
+      threadId,
+      userMessageId,
+      assistantMessageId,
+      generationId,
+      ...(knowledge === null ? {} : { citations: knowledge.citations }),
+    };
   }
 
   /**
@@ -351,12 +389,45 @@ export class GenerationService {
         assistantMessageId: result.assistantMessageId,
         model,
         temperature: assistant?.temperature,
-        history: this.withAssistantPrompt(assistant, thread, toPrompt(path)),
+        /**
+         * D8: a regenerated answer retrieves nothing. The knowledge a turn was given is a
+         * property of that turn, and re-running the question through a corpus the user may
+         * have edited since would produce a "variant" that answers a different question.
+         * The original citations stay on the message being replaced, untouched.
+         */
+        history: this.buildPrompt({
+          assistant,
+          thread,
+          knowledge: null,
+          history: toPrompt(path),
+        }),
       },
       sink,
     );
 
     return result;
+  }
+
+  /**
+   * What `chat.send` asks retrieval for, or null.
+   *
+   * Absent `useKnowledge` is "no": a thread that never opted in is unaffected by the feature
+   * existing. `useKnowledge: true` with no knowledge dependency is refused rather than
+   * silently answered without context — a user who asked for grounding and got none would
+   * have no way to tell.
+   */
+  private async retrieveKnowledge(request: ChatSendRequest): Promise<KnowledgePrompt | null> {
+    if (request.useKnowledge !== true) return null;
+
+    const knowledge = this.deps.knowledge;
+    if (knowledge === undefined) {
+      throw new AppError("INTERNAL", "this build has no knowledge base to retrieve from");
+    }
+
+    return knowledge.retrieve({
+      query: request.text,
+      ...(request.documentIds === undefined ? {} : { documentIds: request.documentIds }),
+    });
   }
 
   /**
@@ -380,37 +451,54 @@ export class GenerationService {
   }
 
   /**
-   * The system turn an assistant contributes, in front of the conversation.
+   * The system turns a turn is given, in front of the conversation.
    *
-   * The prompt is expanded here, at send time, and not when the assistant was saved:
-   * `{{date}}` has to mean the day the message was sent, and `{{thread_title}}` has to
-   * mean the title the thread ended up with. Only the system message is expanded — the
-   * user's own text is theirs, and rewriting `{{date}}` inside it would be the app
-   * putting words in their mouth.
+   * Order is deliberate: the knowledge block first (its numbered excerpts are the material
+   * the answer is supposed to be grounded in), then the assistant's own prompt. Both are
+   * separate messages rather than one concatenated string so each stays legible in a log
+   * and neither can swallow the other's formatting.
+   *
+   * The assistant prompt is expanded here, at send time, and not when the assistant was
+   * saved: `{{date}}` has to mean the day the message was sent, and `{{thread_title}}` has
+   * to mean the title the thread ended up with. Only the system message is expanded — the
+   * user's own text is theirs, and rewriting `{{date}}` inside it would be the app putting
+   * words in their mouth.
    */
-  private withAssistantPrompt(
+  private buildPrompt(input: {
+    assistant: AssistantRow | null;
+    thread: Pick<Thread, "title" | "projectId"> | null;
+    knowledge: KnowledgePrompt | null;
+    history: ChatMessage[];
+  }): ChatMessage[] {
+    const prompts: ChatMessage[] = [];
+
+    if (input.knowledge !== null && input.knowledge.systemText !== "") {
+      prompts.push({ role: "system", content: input.knowledge.systemText });
+    }
+
+    const assistantText = this.assistantSystemText(input.assistant, input.thread);
+    if (assistantText !== null) prompts.push({ role: "system", content: assistantText });
+
+    return [...prompts, ...input.history];
+  }
+
+  /** The assistant's system prompt with its variables expanded, or null when it has none. */
+  private assistantSystemText(
     assistant: AssistantRow | null,
     thread: Pick<Thread, "title" | "projectId"> | null,
-    history: ChatMessage[],
-  ): ChatMessage[] {
-    if (assistant === null || assistant.systemPrompt.trim() === "") return history;
+  ): string | null {
+    if (assistant === null || assistant.systemPrompt.trim() === "") return null;
 
     const projectId = thread?.projectId ?? null;
     const projectName = projectId === null ? null : (getProject(this.db, projectId)?.name ?? null);
     const clock = promptClock(new Date(this.clock()));
 
-    return [
-      {
-        role: "system",
-        content: expandPromptVariables(assistant.systemPrompt, {
-          date: clock.date,
-          time: clock.time,
-          threadTitle: thread?.title ?? "",
-          projectName,
-        }),
-      },
-      ...history,
-    ];
+    return expandPromptVariables(assistant.systemPrompt, {
+      date: clock.date,
+      time: clock.time,
+      threadTitle: thread?.title ?? "",
+      projectName,
+    });
   }
 
   /**

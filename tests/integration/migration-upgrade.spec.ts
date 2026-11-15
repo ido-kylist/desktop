@@ -84,6 +84,21 @@ describe("migration upgrade", () => {
     const columns = conn.prepare("PRAGMA table_info(threads)").all() as { name: string }[];
     expect(columns.map((c) => c.name)).toContain("active_leaf_id");
 
+    // Migration 7's `ALTER TABLE messages ADD COLUMN` runs against a legacy table, which is
+    // the one kind of change an existing database can reject. The new tables come with it.
+    const messageColumns = (
+      conn.prepare("PRAGMA table_info(messages)").all() as { name: string }[]
+    ).map((column) => column.name);
+    expect(messageColumns).toContain("citations_json");
+    const tables = (
+      conn.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as {
+        name: string;
+      }[]
+    ).map((row) => row.name);
+    for (const table of ["documents", "chunks", "artifacts", "artifact_versions"]) {
+      expect(tables).toContain(table);
+    }
+
     const thread = conn
       .prepare("SELECT title, active_leaf_id FROM threads WHERE id = ?")
       .get("11111111-1111-4111-8111-111111111111") as {

@@ -48,11 +48,19 @@ export function SettingsScreen({
   const [actionError, setActionError] = useState<IpcError | null>(null);
   const [probeResult, setProbeResult] = useState<ModelCatalog | null>(null);
   const [probing, setProbing] = useState(false);
+  /** D8: the embedding model draft. Null means "follow what main saved". */
+  const [embeddingDraft, setEmbeddingDraft] = useState<string | null>(null);
+  const [embeddingBusy, setEmbeddingBusy] = useState(false);
+  const [embeddingSaved, setEmbeddingSaved] = useState(false);
 
   const form = settings.data === undefined ? null : providerForm(settings.data);
   const savedBaseUrl = form?.baseUrl ?? null;
   const baseUrl = draft ?? savedBaseUrl ?? "";
   const dirty = isDirty(baseUrl, savedBaseUrl);
+
+  const savedEmbedding = settings.data?.embeddingModel ?? "";
+  const embeddingModel = embeddingDraft ?? savedEmbedding;
+  const embeddingDirty = embeddingModel.trim() !== savedEmbedding.trim();
 
   const loadError = toIpcError(settings.error);
 
@@ -92,6 +100,33 @@ export function SettingsScreen({
       return;
     }
     queryClient.setQueryData(SETTINGS_KEY, result.data);
+  };
+
+  /**
+   * Saves the embedding model. A blank field is a clear, which main answers with the
+   * default — so the field after a save always shows the model retrieval would actually use,
+   * not the empty string the user left behind.
+   */
+  const saveEmbeddingModel = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
+    event.preventDefault();
+    if (embeddingBusy || !embeddingDirty) return;
+
+    setEmbeddingBusy(true);
+    setActionError(null);
+    setEmbeddingSaved(false);
+
+    const result = await setSettings({
+      embeddingModel: embeddingModel.trim() === "" ? null : embeddingModel.trim(),
+    });
+    setEmbeddingBusy(false);
+    if (!result.ok) {
+      setActionError(result.error);
+      return;
+    }
+
+    queryClient.setQueryData(SETTINGS_KEY, result.data);
+    setEmbeddingDraft(null);
+    setEmbeddingSaved(true);
   };
 
   const saveKey = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
@@ -317,6 +352,53 @@ export function SettingsScreen({
               <p className={`field-note ${catalogLine.tone}`} data-testid="model-note">
                 {catalogLine.text}
               </p>
+            </section>
+
+            <section className="settings-section">
+              <h3>Knowledge</h3>
+              <form onSubmit={(event) => void saveEmbeddingModel(event)}>
+                <label className="field">
+                  <span>Embedding model</span>
+                  <input
+                    className="field-input mono"
+                    aria-label="Embedding model"
+                    data-testid="embedding-model"
+                    value={embeddingModel}
+                    placeholder="text-embedding-3-small"
+                    spellCheck={false}
+                    autoComplete="off"
+                    onChange={(event) => {
+                      setEmbeddingSaved(false);
+                      setEmbeddingDraft(event.target.value);
+                    }}
+                  />
+                </label>
+                <p className="field-note">
+                  Indexed documents and searches are embedded with this model. Changing it
+                  invalidates the existing index: documents embedded by a different model are not
+                  comparable, and search says so instead of returning noise.
+                </p>
+                <div className="settings-actions">
+                  <button
+                    type="submit"
+                    className="btn btn-small"
+                    data-testid="save-embedding-model"
+                    disabled={embeddingBusy || !embeddingDirty}
+                  >
+                    {embeddingBusy ? "Saving…" : "Save"}
+                  </button>
+                  {embeddingDirty && (
+                    <span className="warn" data-testid="embedding-model-dirty">
+                      Unsaved changes
+                    </span>
+                  )}
+                  {!embeddingDirty && embeddingSaved && (
+                    <span className="ok" data-testid="embedding-model-saved">
+                      Saved.
+                    </span>
+                  )}
+                </div>
+              </form>
             </section>
 
             <section className="settings-section">

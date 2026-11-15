@@ -1,4 +1,10 @@
-import type { Attachment, ErrorCode, GenerationEvent, IpcError } from "@shared/ipc-contract";
+import type {
+  Attachment,
+  Citation,
+  ErrorCode,
+  GenerationEvent,
+  IpcError,
+} from "@shared/ipc-contract";
 import { create } from "zustand";
 import type { Usage } from "../lib/format";
 
@@ -46,6 +52,12 @@ export interface ChatMessageView {
    * attachments to report.
    */
   attachments?: Attachment[];
+  /**
+   * D8: the sources this answer was grounded on, in marker order. Absent on a turn that used
+   * no knowledge, and rendered as nothing — "no citations" and "not searched" are the same
+   * thing to the transcript.
+   */
+  citations?: Citation[];
 }
 
 export interface StreamingState {
@@ -62,6 +74,8 @@ export interface TurnStart {
   createdAt: string;
   /** D4: what was attached to this turn, so its chips appear before a reload would. */
   attachments?: Attachment[];
+  /** D8: what the turn was grounded on, so citations appear before a reload would. */
+  citations?: Citation[];
 }
 
 export interface ChatState {
@@ -310,9 +324,20 @@ export const useChatStore = create<ChatState>()((set) => ({
 
   startTurn: (turn) =>
     set((state) => {
-      const assistant =
+      const placeholder =
         state.messages.find((message) => message.id === turn.assistantMessageId) ??
         emptyAssistantMessage(turn.assistantMessageId, turn.generationId, turn.createdAt);
+
+      /**
+       * The citations arrive with the response, not on the event stream: retrieval happened
+       * before the turn started, so they are known the moment the ids are. They are attached
+       * to the placeholder rather than replacing it, so a `started` event that beat the
+       * response is not thrown away.
+       */
+      const assistant: ChatMessageView =
+        turn.citations === undefined || turn.citations.length === 0
+          ? placeholder
+          : { ...placeholder, citations: [...turn.citations] };
 
       const userMessage: ChatMessageView = {
         id: turn.userMessageId,
@@ -340,7 +365,6 @@ export const useChatStore = create<ChatState>()((set) => ({
         lastError: null,
       };
     }),
-
   applyEvent: (event) => set((state) => applyGenerationEvent(state, event)),
 
   clearStreaming: (generationId) =>

@@ -2,6 +2,7 @@ import type { VariantGroup } from "../lib/variants";
 import type { ChatMessageView } from "../store/chat-store";
 import { Markdown } from "./Markdown";
 import { MessageAttachments } from "./MessageAttachments";
+import { MessageCitations } from "./MessageCitations";
 import { ReasoningBlock } from "./ReasoningBlock";
 import { ToolRows } from "./ToolRows";
 import { UsageMeter } from "./UsageMeter";
@@ -18,6 +19,10 @@ import { VariantSwitcher } from "./VariantSwitcher";
  * D4 adds the attachments above the user's text. They are metadata only — the chip asks
  * for its own thumbnail when it has one — so a message with three photographs still costs
  * the transcript three rows and no bytes.
+ *
+ * D8 adds the sources under an assistant answer: one chip per retrieved chunk, expanding to
+ * the text it points at. They sit above the footer so the meter row stays the last thing in
+ * the turn, and they render nothing at all for a turn that used no knowledge.
  */
 export function MessageItem({
   message,
@@ -64,6 +69,8 @@ export function MessageItem({
       ) : (
         message.errorCode === null && <span className="muted">…</span>
       )}
+
+      <MessageCitations citations={message.citations ?? []} />
 
       {(variant !== undefined || canRegenerate || usage !== null) && (
         <div className="msg-footer">

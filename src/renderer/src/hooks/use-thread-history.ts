@@ -42,6 +42,10 @@ function toMessageView(message: ResponseOf<"chat.thread">["messages"][number]): 
     ...(message.attachments === undefined || message.attachments.length === 0
       ? {}
       : { attachments: message.attachments }),
+    // D8: the same rule for citations — a restored answer draws the chips it was written with.
+    ...(message.citations === undefined || message.citations.length === 0
+      ? {}
+      : { citations: message.citations }),
   };
 }
 
