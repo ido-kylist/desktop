@@ -76,6 +76,238 @@ body {
   flex-direction: column;
   flex: 1 1 auto;
   min-height: 0;
+  min-width: 0;
+}
+
+/* ---------------------------------------------------------------- shell */
+
+/* The sidebar sits beside the chat pane; the transcript keeps its own scroll. */
+.shell {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* --------------------------------------------------------------- sidebar */
+
+.sidebar {
+  flex: 0 0 300px;
+  width: 300px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.sidebar-top {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.new-chat {
+  width: 100%;
+}
+
+.thread-search {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 8px;
+}
+
+.thread-search:focus {
+  outline: none;
+  border-color: #33405a;
+}
+
+.archived-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.sidebar-note,
+.sidebar-error {
+  margin: 0;
+  padding: 10px 12px;
+  font-size: 12px;
+}
+
+.sidebar-error {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  color: var(--muted);
+}
+
+.thread-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* The full-height spacer the scrollbar measures; the window is the visible slice. */
+.thread-spacer {
+  position: relative;
+}
+
+.thread-window {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.thread-row {
+  /* Must equal THREAD_ROW_HEIGHT in ThreadList.tsx; the windowing depends on it. */
+  height: 96px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  overflow: hidden;
+}
+
+.thread-row[aria-current="true"] {
+  background: var(--panel-strong);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.thread-open {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.thread-title-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.thread-pin {
+  flex: 0 0 auto;
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--line));
+  border-radius: 4px;
+  padding: 0 4px;
+}
+
+.thread-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.thread-meta {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.thread-snippet {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.thread-snippet mark {
+  background: color-mix(in srgb, var(--warn) 30%, transparent);
+  color: var(--text);
+  border-radius: 3px;
+  padding: 0 1px;
+}
+
+.thread-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 16px;
+}
+
+.thread-confirm {
+  font-size: 11px;
+  color: var(--bad);
+}
+
+.thread-rename {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+}
+
+.thread-rename-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 1px solid #33405a;
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 6px;
+}
+
+.link-btn {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: 11px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.link-btn:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.link-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.link-danger:hover:not(:disabled) {
+  color: var(--bad);
 }
 
 .transcript {
@@ -116,6 +348,56 @@ body {
 .bubble-user {
   background: var(--panel-strong);
   max-width: 80%;
+}
+
+/* Footer under an assistant turn: variants, regenerate, meters. */
+.msg-footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  min-height: 16px;
+}
+
+.variants {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.variant-arrow {
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 4px;
+}
+
+.variant-count {
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.usage {
+  display: inline-flex;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-sep {
+  opacity: 0.6;
+}
+
+.usage-cost {
+  color: var(--text);
+}
+
+.bar-total {
+  margin-left: 12px;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
 
 .empty {

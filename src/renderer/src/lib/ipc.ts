@@ -58,6 +58,16 @@ export async function callOrThrow<C extends ChannelName>(
   return result.data;
 }
 
+/**
+ * The one place an unknown rejection becomes a contract error. Used by every surface
+ * that has to show what went wrong, so the code on screen is the code main sent.
+ */
+export function toIpcError(error: unknown): IpcError | null {
+  if (error === null || error === undefined) return null;
+  if (error instanceof IpcFailure) return error.ipc;
+  return { code: "INTERNAL", message: error instanceof Error ? error.message : String(error) };
+}
+
 export function sendChat(
   request: RequestOf<"chat.send">,
 ): Promise<IpcResult<ResponseOf<"chat.send">>> {
@@ -70,6 +80,36 @@ export function stopGeneration(generationId: string): Promise<IpcResult<Response
 
 export function loadThread(threadId: string): Promise<ResponseOf<"chat.thread">> {
   return callOrThrow("chat.thread", { threadId });
+}
+
+/** The history list. A failed envelope becomes a rejection, for TanStack Query. */
+export function listThreads(
+  request: RequestOf<"threads.list">,
+): Promise<ResponseOf<"threads.list">> {
+  return callOrThrow("threads.list", request);
+}
+
+export function updateThread(
+  request: RequestOf<"threads.update">,
+): Promise<IpcResult<ResponseOf<"threads.update">>> {
+  return invoke("threads.update", request);
+}
+
+export function deleteThread(threadId: string): Promise<IpcResult<ResponseOf<"threads.delete">>> {
+  return invoke("threads.delete", { threadId });
+}
+
+export function regenerateMessage(
+  messageId: string,
+): Promise<IpcResult<ResponseOf<"chat.regenerate">>> {
+  return invoke("chat.regenerate", { messageId });
+}
+
+export function setActiveVariant(
+  threadId: string,
+  messageId: string,
+): Promise<IpcResult<ResponseOf<"chat.setActiveVariant">>> {
+  return invoke("chat.setActiveVariant", { threadId, messageId });
 }
 
 /** Subscribes to the generation stream. No-op when the bridge never loaded. */
