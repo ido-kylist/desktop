@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createDb, type DrizzleDb } from "../../src/main/db/client.js";
 import { closeDatabase, type Db, openDatabase, schemaVersion } from "../../src/main/db/index.js";
+import { MIGRATIONS } from "../../src/main/db/migrations.js";
 import {
   listThreads,
   softDeleteThread,
@@ -11,7 +12,6 @@ import {
   updateThread,
 } from "../../src/main/db/repo.js";
 import { AppError } from "../../src/main/errors.js";
-import { MIGRATIONS } from "../../src/main/db/migrations.js";
 import { contracts } from "../../src/shared/ipc-contract";
 
 /**

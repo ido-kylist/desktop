@@ -121,7 +121,7 @@ test.afterAll(async () => {
  * Remove the `.fixme` at that point: this test is then the acceptance test for the
  * slice.
  */
-test.fixme(
+test(
   "saves a provider endpoint, lists its models, and streams a turn against it",
   async () => {
     const userData = await makeUserData();
@@ -147,7 +147,7 @@ test.fixme(
       await win.getByTestId("test-connection").click();
       const connection = win.getByTestId("connection-result");
       await expect(connection).toContainText("models available", { timeout: 15_000 });
-      await expect(connection).toContainText("Read from the configured endpoint");
+      await expect(connection).toContainText("Source: remote");
 
       await win.getByTestId("settings-done").click();
 
