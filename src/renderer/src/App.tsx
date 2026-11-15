@@ -1,12 +1,24 @@
 import type { IpcError } from "@shared/ipc-contract";
-import { useCallback, useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Composer } from "./components/Composer";
 import { Diagnostics } from "./components/Diagnostics";
 import { ErrorBanner } from "./components/ErrorBanner";
 import { MessageList } from "./components/MessageList";
+import { Sidebar } from "./components/Sidebar";
+import { UsageTotal } from "./components/UsageMeter";
 import { useAutoScroll } from "./hooks/use-auto-scroll";
 import { useThreadHistory } from "./hooks/use-thread-history";
-import { bridge, sendChat, stopGeneration, subscribeToGenerationEvents } from "./lib/ipc";
+import { THREAD_LIST_KEY } from "./hooks/use-thread-list";
+import { sumUsage } from "./lib/format";
+import {
+  bridge,
+  regenerateMessage,
+  sendChat,
+  setActiveVariant,
+  stopGeneration,
+  subscribeToGenerationEvents,
+} from "./lib/ipc";
 import { DEFAULT_MODEL } from "./lib/models";
 import { type ChatMessageView, THREAD_STORAGE_KEY, useChatStore } from "./store/chat-store";
 
@@ -52,11 +64,37 @@ export function App(): React.JSX.Element {
   const startTurn = useChatStore((state) => state.startTurn);
   const clearStreaming = useChatStore((state) => state.clearStreaming);
   const setLastError = useChatStore((state) => state.setLastError);
+  const selectThread = useChatStore((state) => state.selectThread);
 
   const [model, setModel] = useState<string>(DEFAULT_MODEL);
+  const [switching, setSwitching] = useState(false);
 
   const history = useThreadHistory(threadId);
+  const reloadThread = history.reload;
   const scroll = useAutoScroll();
+  const queryClient = useQueryClient();
+
+  /**
+   * A regenerate leaves two answers visible — the one being replaced and the one
+   * arriving — until the thread is re-read, because the live stream appends. The
+   * re-read happens when the stream ends, not before: a snapshot taken mid-answer
+   * would hide the new variant if main had not made it the active leaf yet, and the
+   * remaining deltas would have nowhere to land.
+   */
+  const refreshAfterStream = useRef(false);
+  const wasStreaming = useRef(false);
+
+  useEffect(() => {
+    const streamingNow = streaming !== null;
+    if (wasStreaming.current && !streamingNow) {
+      void queryClient.invalidateQueries({ queryKey: THREAD_LIST_KEY });
+      if (refreshAfterStream.current) {
+        refreshAfterStream.current = false;
+        void reloadThread();
+      }
+    }
+    wasStreaming.current = streamingNow;
+  }, [streaming, queryClient, reloadThread]);
 
   // One subscription for the life of the window; the unsubscribe runs on unmount.
   useEffect(() => subscribeToGenerationEvents(applyEvent), [applyEvent]);
@@ -84,8 +122,10 @@ export function App(): React.JSX.Element {
         text,
         createdAt: new Date().toISOString(),
       });
+      // A new thread has to appear in the sidebar while its answer is still arriving.
+      void queryClient.invalidateQueries({ queryKey: THREAD_LIST_KEY });
     },
-    [model, setLastError, startTurn],
+    [model, setLastError, startTurn, queryClient],
   );
 
   const stop = useCallback(async () => {
@@ -100,6 +140,49 @@ export function App(): React.JSX.Element {
     if (!result.ok) setLastError(result.error);
   }, [clearStreaming, setLastError]);
 
+  /**
+   * Switching variants is a server-side move: main records which leaf is active and
+   * the thread is re-read, because only main knows what the new active path is.
+   */
+  const switchVariant = useCallback(
+    async (messageId: string) => {
+      const current = useChatStore.getState().threadId;
+      if (current === null) return;
+
+      setSwitching(true);
+      try {
+        const result = await setActiveVariant(current, messageId);
+        if (!result.ok) {
+          setLastError(result.error);
+          return;
+        }
+        await reloadThread();
+      } finally {
+        setSwitching(false);
+      }
+    },
+    [reloadThread, setLastError],
+  );
+
+  const regenerate = useCallback(
+    async (messageId: string) => {
+      const result = await regenerateMessage(messageId);
+      if (!result.ok) {
+        setLastError(result.error);
+        return;
+      }
+      refreshAfterStream.current = true;
+    },
+    [setLastError],
+  );
+
+  const onDeleted = useCallback(
+    (deletedId: string) => {
+      if (useChatStore.getState().threadId === deletedId) selectThread(null);
+    },
+    [selectThread],
+  );
+
   const last = messages[messages.length - 1];
   const turnError: IpcError | null =
     lastError ??
@@ -111,38 +194,58 @@ export function App(): React.JSX.Element {
 
   const retryText = findRetryText(messages);
   const preloadMissing = bridge() === undefined;
+  const totals = sumUsage(messages);
+  const busy = switching || streaming !== null;
 
   return (
     <div className="app">
       <header className="bar">
         <span className="mark" />
         <h1>Cleon</h1>
-        <span className="tag">D1 · chat</span>
+        {totals !== null && <UsageTotal usage={totals} />}
+        <span className="tag">D2 · history</span>
       </header>
 
-      <main className="chat">
-        <div className="transcript" ref={scroll.ref} onScroll={scroll.onScroll}>
-          <MessageList messages={messages} />
-          {history.loading && <p className="muted">Restoring…</p>}
-          {restoreBanner(history.error)}
-          {turnError !== null && (
-            <ErrorBanner
-              error={turnError}
-              retryText={retryText}
-              onRetry={(text) => void send(text)}
-            />
-          )}
-        </div>
-
-        <Composer
-          streaming={streaming !== null}
-          disabled={preloadMissing}
-          model={model}
-          onModelChange={setModel}
-          onSend={(text) => void send(text)}
-          onStop={() => void stop()}
+      <div className="shell">
+        <Sidebar
+          selectedThreadId={threadId}
+          onSelect={selectThread}
+          onNewChat={() => selectThread(null)}
+          onDeleted={onDeleted}
         />
-      </main>
+
+        <main className="chat">
+          <div className="transcript" ref={scroll.ref} onScroll={scroll.onScroll}>
+            {(messages.length > 0 || threadId === null) && (
+              <MessageList
+                messages={messages}
+                groups={history.groups}
+                busy={busy}
+                onSwitchVariant={(messageId) => void switchVariant(messageId)}
+                onRegenerate={(messageId) => void regenerate(messageId)}
+              />
+            )}
+            {history.loading && <p className="muted">Restoring…</p>}
+            {restoreBanner(history.error)}
+            {turnError !== null && (
+              <ErrorBanner
+                error={turnError}
+                retryText={retryText}
+                onRetry={(text) => void send(text)}
+              />
+            )}
+          </div>
+
+          <Composer
+            streaming={streaming !== null}
+            disabled={preloadMissing}
+            model={model}
+            onModelChange={setModel}
+            onSend={(text) => void send(text)}
+            onStop={() => void stop()}
+          />
+        </main>
+      </div>
 
       <Diagnostics />
     </div>
