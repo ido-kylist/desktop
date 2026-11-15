@@ -160,6 +160,55 @@ export const settings = sqliteTable("settings", {
   updatedAt: text("updated_at").notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
 });
 
+/**
+ * Migration 6. A local MCP server: a command, its ordered arguments, and whether it is
+ * switched on.
+ *
+ * `argsJson` and `envJson` are JSON text, because an argument list is an ordered vector
+ * and nothing queries into it: the row is read whole, parsed once, and handed to
+ * `spawn` with `shell: false`. `envJson` and `enabled` are written by nobody in this
+ * phase (see `migrations.ts`): they exist so the next affordance is not a migration.
+ */
+export const mcpServers = sqliteTable(
+  "mcp_servers",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    command: text("command").notNull(),
+    argsJson: text("args_json").notNull().default("[]"),
+    envJson: text("env_json").notNull().default("{}"),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    createdAt: text("created_at").notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
+  },
+  (t) => [index("mcp_servers_created_idx").on(t.createdAt)],
+);
+
+/**
+ * Migration 6. One row per tool call the user was asked to approve.
+ *
+ * The status is the whole point: `pending` means nothing has run, and every terminal
+ * state is written by the one conditional UPDATE in `repo-mcp.ts`, so a second resolve
+ * matches no row instead of running a tool twice.
+ */
+export const mcpApprovals = sqliteTable(
+  "mcp_approvals",
+  {
+    id: text("id").primaryKey(),
+    serverId: text("server_id")
+      .notNull()
+      .references(() => mcpServers.id, { onDelete: "cascade" }),
+    tool: text("tool").notNull(),
+    argsJson: text("args_json").notNull().default("{}"),
+    status: text("status", { enum: ["pending", "executed", "denied", "failed"] }).notNull(),
+    createdAt: text("created_at").notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
+    resolvedAt: text("resolved_at"),
+  },
+  (t) => [
+    index("mcp_approvals_server_idx").on(t.serverId, t.createdAt),
+    index("mcp_approvals_status_idx").on(t.status),
+  ],
+);
+
 export type Thread = typeof threads.$inferSelect;
 export type Message = typeof messages.$inferSelect;
 export type ContentBlock = typeof contentBlocks.$inferSelect;
@@ -168,3 +217,5 @@ export type Setting = typeof settings.$inferSelect;
 export type Project = typeof projects.$inferSelect;
 export type Assistant = typeof assistants.$inferSelect;
 export type Prompt = typeof prompts.$inferSelect;
+export type McpServerRecord = typeof mcpServers.$inferSelect;
+export type McpApprovalRecord = typeof mcpApprovals.$inferSelect;

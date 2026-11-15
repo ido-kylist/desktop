@@ -52,6 +52,7 @@ import { attachToUserMessage, listAttachmentsForMessages } from "./db/repo-attac
 import { createProject, listProjects, updateProject } from "./db/repo-projects.js";
 import { createPrompt, deletePrompt, listPrompts, updatePrompt } from "./db/repo-prompts.js";
 import { AppError, toIpcError } from "./errors.js";
+import { McpManager } from "./mcp/manager.js";
 import { registerNativeAppHooks, showLauncher } from "./native/handlers.js";
 import { type SecretBackend, type SecretStore, SecretsService } from "./secrets.js";
 
@@ -97,6 +98,7 @@ let db: ReturnType<typeof openDatabase> | null = null;
 let orm: DrizzleDb | null = null;
 let secrets: SecretsService | null = null;
 let generations: GenerationService | null = null;
+let mcp: McpManager | null = null;
 
 function getDb(): ReturnType<typeof openDatabase> {
   if (!db) db = openDatabase(defaultDbPath(app.getPath("userData")));
@@ -185,6 +187,20 @@ function getGenerations(): GenerationService {
     });
   }
   return generations;
+}
+
+/**
+ * The MCP runtime (D7), over the shared connection.
+ *
+ * Built lazily like every other service: it holds child processes, and a window that never
+ * opens the MCP panel should never have one. Constructed without spawning anything — the
+ * servers in the database stay `stopped` until something asks for their tools.
+ */
+function getMcp(): McpManager {
+  if (!mcp) {
+    mcp = new McpManager({ db: getOrm(), clientVersion: app.getVersion() });
+  }
+  return mcp;
 }
 
 /**
@@ -486,6 +502,36 @@ const handlers: { [C in ChannelName]: Handler<C> } = {
     deletePrompt(getOrm(), promptId);
     return { ok: true as const };
   },
+
+  /* ---------------------------------------------------------------- D7 MCP */
+
+  /**
+   * Servers and their live state. A read, and the only one of these that is cheap: it
+   * touches the database and the in-memory runtime table, never a child.
+   */
+  "mcp.listServers": () => getMcp().listServers(),
+
+  "mcp.addServer": (payload) => getMcp().addServer(payload),
+
+  /** Awaited, because the row must not be gone while its process is still writing. */
+  "mcp.removeServer": async ({ serverId }) => {
+    await getMcp().removeServer(serverId);
+    return { ok: true as const };
+  },
+
+  "mcp.killServer": async ({ serverId }) => {
+    await getMcp().killServer(serverId);
+    return { ok: true as const };
+  },
+
+  /** Starts the server if it is not running; a failure is an error with a code. */
+  "mcp.listTools": ({ serverId }) => getMcp().listTools(serverId),
+
+  /** Records the intent. Nothing executes, which is the whole point of the channel. */
+  "mcp.requestToolCall": (payload) => getMcp().requestToolCall(payload),
+
+  /** The only path from an approval to a tool call, and the only one that spawns on `allow`. */
+  "mcp.resolveApproval": (payload) => getMcp().resolveApproval(payload),
 };
 
 export function registerIpc(): void {
@@ -597,4 +643,16 @@ app.whenReady().then(() => {
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
+});
+
+/**
+ * MCP children are stopped when the app goes away.
+ *
+ * Synchronous on purpose (`dispose` signals and schedules the hard kill): a `before-quit`
+ * handler that awaits can be cut short by the app exiting mid-await, and a spawned server
+ * that outlives its parent is a stray process nobody knows to stop. Only an already-built
+ * manager is touched — quitting must not construct one.
+ */
+app.on("before-quit", () => {
+  mcp?.dispose();
 });

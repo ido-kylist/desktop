@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Composer, type PromptInsertion } from "./components/Composer";
 import { Diagnostics } from "./components/Diagnostics";
 import { ErrorBanner } from "./components/ErrorBanner";
+import { McpPanel } from "./components/McpPanel";
 import { MessageList } from "./components/MessageList";
 import { PromptLibrary } from "./components/PromptLibrary";
 import { SettingsScreen } from "./components/SettingsScreen";
@@ -99,6 +100,7 @@ export function App(): React.JSX.Element {
   const [projectId, setProjectId] = useState<string | null>(null);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [promptInsert, setPromptInsert] = useState<PromptInsertion | null>(null);
+  const [mcpOpen, setMcpOpen] = useState(false);
 
   const settings = useSettings();
   const { catalog } = useModelCatalog();
@@ -292,6 +294,16 @@ export function App(): React.JSX.Element {
         <button
           type="button"
           className="btn btn-small"
+          aria-label="MCP servers"
+          title="MCP servers"
+          data-testid="open-mcp"
+          onClick={() => setMcpOpen((open) => !open)}
+        >
+          MCP
+        </button>
+        <button
+          type="button"
+          className="btn btn-small"
           aria-label="Settings"
           title="Settings"
           data-testid="open-settings"
@@ -368,6 +380,8 @@ export function App(): React.JSX.Element {
           }}
         />
       )}
+
+      {mcpOpen && <McpPanel onClose={() => setMcpOpen(false)} />}
 
       <Diagnostics />
     </div>

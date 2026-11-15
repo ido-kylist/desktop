@@ -262,3 +262,54 @@ export function updatePrompt(
 export function deletePrompt(promptId: string): Promise<IpcResult<ResponseOf<"prompts.delete">>> {
   return invokeSettled("prompts.delete", { promptId });
 }
+
+/* ------------------------------------------------------------ D7: MCP */
+
+/**
+ * The server list drives a panel that has its own four states, so it throws: TanStack Query
+ * owns the error, and the panel renders it as a state rather than as an empty list.
+ */
+export function listMcpServers(): Promise<ResponseOf<"mcp.listServers">> {
+  return callOrThrow("mcp.listServers", {});
+}
+
+export function addMcpServer(
+  request: RequestOf<"mcp.addServer">,
+): Promise<IpcResult<ResponseOf<"mcp.addServer">>> {
+  return invokeSettled("mcp.addServer", request);
+}
+
+export function removeMcpServer(
+  serverId: string,
+): Promise<IpcResult<ResponseOf<"mcp.removeServer">>> {
+  return invokeSettled("mcp.removeServer", { serverId });
+}
+
+export function killMcpServer(serverId: string): Promise<IpcResult<ResponseOf<"mcp.killServer">>> {
+  return invokeSettled("mcp.killServer", { serverId });
+}
+
+/**
+ * Starts the server if it is not running. Settled rather than thrown: a server that cannot
+ * start is a message in the panel, and the panel must stay on screen to show it.
+ */
+export function listMcpTools(serverId: string): Promise<IpcResult<ResponseOf<"mcp.listTools">>> {
+  return invokeSettled("mcp.listTools", { serverId });
+}
+
+/**
+ * Asks for a tool call. This never runs anything — it produces an approval, and the
+ * arguments travel to main once, where they are recorded and not logged.
+ */
+export function requestMcpToolCall(
+  request: RequestOf<"mcp.requestToolCall">,
+): Promise<IpcResult<ResponseOf<"mcp.requestToolCall">>> {
+  return invokeSettled("mcp.requestToolCall", request);
+}
+
+/** The only call that executes a tool, and only when `allow` is true. */
+export function resolveMcpApproval(
+  request: RequestOf<"mcp.resolveApproval">,
+): Promise<IpcResult<ResponseOf<"mcp.resolveApproval">>> {
+  return invokeSettled("mcp.resolveApproval", request);
+}

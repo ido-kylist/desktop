@@ -217,3 +217,76 @@ with a `Date`; the integration test freezes the service's clock. Neither mocks a
 statement is false by construction once migration 5 exists, and its real claim is
 "migration 4 is applied", so it now asserts `>= 4` and keeps the `attachments` column
 assertion that was the substance of the test.
+
+## D7 — MCP: stdio, per-call approvals, and a child that cannot hurt the app
+
+**Transport is stdio with newline-delimited JSON-RPC 2.0.** No SSE, no HTTP. That is MCP's
+own stdio framing, and it is the only transport a locally installed server is normally
+launched with; adding a second one would be a second set of failure modes with nothing yet
+asking for it. Frames are one JSON object per line each way, and the framing is tested
+independently of any child process (`tests/unit/jsonrpc.spec.ts`) so a rule like "two
+messages in one chunk" is proven for its own sake rather than by accident.
+
+**Protocol v8, seven channels, and no channel that executes a tool directly.**
+`mcp.requestToolCall` records an intent and returns an approval id; `mcp.resolveApproval`
+is the only path to `tools/call`, and it only calls when `allow` is true. There is no
+"remember this" and no allow-list: the brief for this phase asked for per-call approval,
+and a per-call gate is the only version whose default is deny. A second resolve of the
+same approval is `CONFLICT`, not a second execution, because the claim is a conditional
+`UPDATE … WHERE status = 'pending'` plus an in-process set of in-flight ids.
+
+**Deny never touches the child.** The integration test proves it with a tool that would
+kill the server: `crash` exits the process, so a denial that reached the child could not be
+mistaken for one that did not — the status after a denied `crash` is still `ready`.
+
+**A request starts nothing.** `mcp.requestToolCall` does not spawn and does not check that
+the tool exists. Spawning is what `tools/list` and `resolveApproval(allow)` do; a server
+that is never used never runs, and a request can be made against a server that is not
+running. Whether the tool exists is the server's answer at execution time, recorded as a
+`failed` approval with the server's own words.
+
+**A crashed server is not restarted implicitly.** Its exit is news the user has to see, and
+a silent restart would recreate the tools of a process that died without saying why.
+`killServer` then `listTools` is the deliberate restart, and the error says so. The last
+line of stderr is kept for display: "it crashed" with no reason is a support ticket, not a
+state anyone can act on.
+
+**Kill is SIGTERM, then SIGKILL after two seconds, and the wait is bounded.** A child that
+ignores both is not a thing the OS allows, but a stream that never reports the exit would
+hang an IPC call forever, so the wait resolves on a timer regardless. On quit the signal is
+sent synchronously: a `before-quit` handler that awaits can be cut short by the app going
+away mid-await, and a spawned server that outlives its parent is a stray process nobody
+knows to stop.
+
+**Arguments are never logged, at any level.** They are the one part of this surface that
+can carry a token or a password. The logs carry the server id, the tool name and a byte
+count — enough to tell "empty" from "something was passed", and nothing a log reader can
+replay. The API key rule from invariant 2 applies to tool arguments for the same reason.
+
+**A tool result with `isError: true` is `executed`, not `failed`.** The call completed; the
+tool's own result says the work failed. Collapsing the two would throw away the tool's
+words and make the status mean two different things. `failed` is reserved for the call not
+completing — a timeout, a crash, a JSON-RPC error — and carries the reason.
+
+**Server-initiated requests are refused (-32601), not ignored.** This client advertises no
+capabilities, so a compliant server will not send one; a non-compliant one should not be
+left waiting on a reply that will never come. Notifications are ignored, and the tests say
+so explicitly rather than leaving the reader to guess.
+
+**Removing a server removes its approvals (`ON DELETE CASCADE`).** A pending call on a
+server that no longer exists has nowhere to go, and offering a button that cannot work is
+worse than forgetting the row. A durable audit that outlives the server it audits needs a
+denormalised server name to stay readable; that is a design change and is in `BACKLOG.md`.
+
+**`env_json` and `enabled` exist in schema v6 with nothing writing them.** They are the two
+fields a "disable without removing" and a "set an environment variable" affordance both
+need, and a boolean column added later is a migration for nothing. Neither is exposed by
+any channel in this phase, and both defaults are the safe ones: inherit no environment,
+and enabled.
+
+**The panel's approval records are this window's memory.** They are persisted in
+`mcp_approvals` (the integration test reads the row for every outcome), but the contract
+declares no channel to list them back, so a relaunch forgets what the panel was showing.
+Reading history back is in `BACKLOG.md` rather than faked behind a list that would be a
+subset of the truth. Status is likewise not pushed: the panel re-reads on every action and
+on a Refresh button, which is honest about being a read.
