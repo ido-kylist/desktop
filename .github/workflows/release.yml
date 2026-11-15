@@ -1,8 +1,10 @@
 name: Release
 
 on:
-  push:
-    tags: ["v*"]
+  # Tag-triggered publishing is deliberately off for now: the arm64 DMG is
+  # cross-built from an x64 runner and that path has not been proven once. A tag
+  # push that silently fails to publish is worse than a manual release. Re-enable
+  # `push: tags: ["v*"]` after the first successful cross-build is observed.
   workflow_dispatch:
 
 permissions:
