@@ -190,4 +190,58 @@ ALTER TABLE threads ADD COLUMN assistant_id TEXT;
 CREATE INDEX IF NOT EXISTS threads_assistant_idx ON threads (assistant_id);
 `.trim(),
   },
+  {
+    /**
+     * D7: local MCP servers, and the approval record that gates every tool call.
+     *
+     * `args_json` and `env_json` are JSON text rather than child tables: an argument list
+     * is an ordered vector, not a set of rows, and nothing ever queries *into* it. They
+     * are read whole and passed to `spawn` unchanged.
+     *
+     * `env_json` exists so a server can be given environment of its own later without a
+     * second migration. Nothing writes it in this phase — `mcp.addServer` takes no env —
+     * so it defaults to `{}` and the child inherits the app's environment.
+     *
+     * `enabled` is likewise stored, defaulted to 1, and not yet exposed: it is the column a
+     * "disable without removing" affordance needs, and adding it later would be a
+     * migration for a boolean.
+     *
+     * The approval table is the security record. `status` is checked against the closed set
+     * the contract declares, so a row written by a newer build cannot present an older
+     * renderer with a state it has no picture for. `resolved_at` is null exactly while
+     * `status = 'pending'`; the repository enforces that pairing (the conditional UPDATE
+     * sets both together) because SQLite's CHECK cannot reference the row's transition.
+     *
+     * `ON DELETE CASCADE` on `server_id`: removing a server removes its approvals. The
+     * alternative — a durable audit that outlives the thing it audits — needs a
+     * denormalised server name to stay readable, and that is a design change, not a
+     * constraint. It is recorded in BACKLOG.md.
+     */
+    version: 6,
+    name: "mcp-servers",
+    sql: `
+CREATE TABLE IF NOT EXISTS mcp_servers (
+  id         TEXT PRIMARY KEY,
+  name       TEXT NOT NULL,
+  command    TEXT NOT NULL,
+  args_json  TEXT NOT NULL DEFAULT '[]',
+  env_json   TEXT NOT NULL DEFAULT '{}',
+  enabled    INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS mcp_servers_created_idx ON mcp_servers (created_at);
+
+CREATE TABLE IF NOT EXISTS mcp_approvals (
+  id          TEXT PRIMARY KEY,
+  server_id   TEXT NOT NULL REFERENCES mcp_servers (id) ON DELETE CASCADE,
+  tool        TEXT NOT NULL,
+  args_json   TEXT NOT NULL DEFAULT '{}',
+  status      TEXT NOT NULL CHECK (status IN ('pending','executed','denied','failed')),
+  created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  resolved_at TEXT
+);
+CREATE INDEX IF NOT EXISTS mcp_approvals_server_idx ON mcp_approvals (server_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS mcp_approvals_status_idx ON mcp_approvals (status);
+`.trim(),
+  },
 ];

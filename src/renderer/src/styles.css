@@ -1387,3 +1387,233 @@ body {
   flex-direction: column;
   gap: 8px;
 }
+
+/* --------------------------------------------------------- D7: MCP panel */
+
+/* Wider than the prompt library: a server row carries a status, a command, a crash reason
+   and a tool list, and at the library's width every one of them wraps. */
+.mcp {
+  width: min(920px, calc(100vw - 48px));
+}
+
+.mcp-kicker {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: lowercase;
+}
+
+.mcp-servers {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mcp-server {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mcp-server-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.mcp-server-name {
+  font-weight: 600;
+}
+
+.mcp-server-tools-count {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.mcp-server-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+}
+
+/* The status word is the one piece of live state in the panel, so it is coloured by value:
+   a crash has to be findable without reading. */
+.mcp-status {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.mcp-status-ready {
+  color: #4ade80;
+  border-color: #2f6f47;
+}
+
+.mcp-status-starting {
+  color: #fbbf24;
+  border-color: #7a5a17;
+}
+
+.mcp-status-crashed {
+  color: #f87171;
+  border-color: #7f2a2a;
+}
+
+.mcp-server-command {
+  font-size: 11px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.mcp-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+}
+
+.mcp-tool-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mcp-tool {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.mcp-tool-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.mcp-tool-name {
+  font-size: 12px;
+}
+
+.mcp-tool-description {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* The gate. It sits above the server list, and it is the only thing on this panel that can
+   make a tool run. */
+.mcp-approval {
+  margin-top: 12px;
+  border: 1px solid #7a5a17;
+  border-radius: 10px;
+  padding: 12px;
+  background: rgba(251, 191, 36, 0.06);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mcp-approval-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mcp-approval-title {
+  margin: 0;
+  font-size: 14px;
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+}
+
+.mcp-dot {
+  color: var(--muted);
+}
+
+.mcp-json {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid var(--line);
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 240px;
+  overflow: auto;
+}
+
+.mcp-note {
+  margin: 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.mcp-approval-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.mcp-records-title {
+  margin: 14px 0 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.mcp-records {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mcp-record {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mcp-record-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.mcp-record-status {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: lowercase;
+}
+
+.mcp-record-executed .mcp-record-status {
+  color: #4ade80;
+}
+
+.mcp-record-denied .mcp-record-status {
+  color: #fbbf24;
+}
+
+.mcp-record-failed .mcp-record-status {
+  color: #f87171;
+}

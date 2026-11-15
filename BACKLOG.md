@@ -78,3 +78,37 @@ Work consciously deferred. Nothing here is a surprise in a demo, because it is w
   component level; there is still no renderer test harness (deferred since D0).
 - **The prompt library does not manage folders or tags**, and insertion always appends to
   the end of the composer rather than at the caret.
+
+## Deferred from D7
+
+- **stdio is the only transport.** No HTTP and no SSE. That is what a locally installed
+  server is launched with and what this phase asked for; a second transport is a second
+  set of failure modes, and nothing yet asks for it.
+- **No approval history channel.** Every outcome is written to `mcp_approvals` and the
+  integration test reads it there, but the contract declares no `mcp.listApprovals`, so the
+  panel's records are this window's memory and a relaunch forgets them. A "Recent calls"
+  section wants that channel first.
+- **No "remember this" and no allow-list.** Deliberate for this phase: every call asks
+  again. A per-tool allow-list is a security feature that needs its own review, and a
+  half-built one ("always allow this session") is worse than none.
+- **Server status is not pushed.** A crash while the panel is idle is visible on the next
+  read — any action, or the Refresh button — not the moment it happens. A push channel
+  (`mcp:event`, in the shape of `generation:event`) is the honest fix.
+- **`env_json` and `enabled` are stored but have no channel.** Both default to the safe
+  value and are documented in migration 6; the affordances are not built.
+- **Removing a server deletes its approvals.** `ON DELETE CASCADE`: there is no audit trail
+  that outlives the server it audits. Keeping one needs a denormalised server name and a
+  decision about how long a refused call is worth remembering.
+- **Tool arguments are not validated against the server's `inputSchema`.** Main passes an
+  object through and the server decides; enforcing a schema this app did not write would
+  mean trusting it as a validator. The panel refuses anything that is not a JSON object,
+  which is where the useful error message lives.
+- **No notifications are subscribed.** `notifications/tools/list_changed` and
+  `notifications/message` are ignored, so a server whose tools change while it runs keeps
+  showing the list from the last read.
+- **No concurrency limit.** Every server is one process and every server can be running at
+  once; ten servers is ten idle node processes. A cap (or an idle timeout) wants a decision
+  about which one to evict.
+- **No component-level tests for the MCP panel.** The approval card's blocking behaviour is
+  proven end to end in `tests/e2e/mcp.spec.ts` and the gate itself in the integration suite;
+  the panel's own states (loading, error, empty) have no renderer harness, as with D6.

@@ -10,7 +10,7 @@
  * every channel listed here has a schema. Adding a name without a schema is a
  * compile error, so the two halves cannot drift.
  */
-export const PROTOCOL_VERSION = 7 as const;
+export const PROTOCOL_VERSION = 8 as const;
 
 export const CHANNEL_NAMES = [
   "app.info",
@@ -44,6 +44,13 @@ export const CHANNEL_NAMES = [
   "prompts.create",
   "prompts.update",
   "prompts.delete",
+  "mcp.listServers",
+  "mcp.addServer",
+  "mcp.removeServer",
+  "mcp.killServer",
+  "mcp.listTools",
+  "mcp.requestToolCall",
+  "mcp.resolveApproval",
 ] as const;
 
 export type ChannelName = (typeof CHANNEL_NAMES)[number];

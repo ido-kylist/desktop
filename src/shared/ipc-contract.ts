@@ -107,6 +107,61 @@ export const PromptSchema = z.object({
 });
 export type Prompt = z.infer<typeof PromptSchema>;
 
+/* --------------------------------------------------------------- D7: MCP */
+
+/**
+ * Where a server's process is, right now.
+ *
+ * This is runtime state, deliberately not a database column: it describes the child
+ * process the app is holding, and a row that outlived its process would be a lie. On
+ * relaunch every server is `stopped`.
+ */
+export const McpServerStatusSchema = z.enum(["stopped", "starting", "ready", "crashed"]);
+export type McpServerStatus = z.infer<typeof McpServerStatusSchema>;
+
+/**
+ * One tool a server advertises.
+ *
+ * `inputSchema` is the server's own JSON Schema, carried through untouched: main does not
+ * validate arguments against it, because a schema this app did not write is not something
+ * it should claim to enforce. It is `unknown` to the renderer only in the sense that
+ * nothing there interprets it either — it is shown, not trusted.
+ */
+export const McpToolSchema = z.object({
+  name: z.string(),
+  description: z.string(),
+  inputSchema: z.record(z.string(), z.unknown()),
+});
+export type McpTool = z.infer<typeof McpToolSchema>;
+
+/**
+ * A configured server plus the state of the process behind it.
+ *
+ * `toolCount` is what the last `tools/list` returned (zero before one has run), and
+ * `lastError` is the last line of a crashed server's stderr — kept because "it crashed"
+ * with no reason is a support ticket, not a state a user can act on.
+ */
+export const McpServerSchema = z.object({
+  id: z.uuid(),
+  name: z.string(),
+  command: z.string(),
+  args: z.array(z.string()),
+  enabled: z.boolean(),
+  createdAt: z.iso.datetime(),
+  status: McpServerStatusSchema,
+  toolCount: z.number().int().nonnegative(),
+  lastError: z.string().nullable(),
+});
+export type McpServer = z.infer<typeof McpServerSchema>;
+
+/**
+ * An approval's terminal state. `pending` is the only non-terminal one, and an approval
+ * that is not pending cannot be resolved again — a second Allow is a CONFLICT, not a
+ * second execution.
+ */
+export const McpApprovalStatusSchema = z.enum(["pending", "executed", "denied", "failed"]);
+export type McpApprovalStatus = z.infer<typeof McpApprovalStatusSchema>;
+
 /* ---------------------------------------------------------------- channels */
 
 type Contract = { request: z.ZodTypeAny; response: z.ZodTypeAny };
@@ -485,6 +540,98 @@ export const contracts = {
   "prompts.delete": {
     request: z.object({ promptId: z.uuid() }),
     response: z.object({ ok: z.literal(true) }),
+  },
+
+  /* ------------------------------------------------------------ D7: MCP */
+
+  /**
+   * Every configured server, with the live state of its process.
+   *
+   * A read: it never spawns anything. A server with no process is `stopped`, and it stays
+   * that way until something asks for its tools or for one of its tools to run.
+   */
+  "mcp.listServers": {
+    request: z.object({}),
+    response: z.object({
+      items: z.array(McpServerSchema),
+      total: z.number().int().nonnegative(),
+    }),
+  },
+
+  /**
+   * Persist a server. No process is started here: adding a command to a list is not the
+   * same act as running it, and a user who adds one and leaves is not owed a process.
+   *
+   * `args` is an array, not a shell string — `spawn` is called with `shell: false`, so
+   * nothing in a server's arguments is ever interpreted by a shell.
+   */
+  "mcp.addServer": {
+    request: z.object({
+      name: z.string().trim().min(1).max(80),
+      command: z.string().trim().min(1).max(500),
+      args: z.array(z.string().max(500)).max(32),
+    }),
+    response: McpServerSchema,
+  },
+
+  /** Removes the row and its approvals, and stops the process first if one is running. */
+  "mcp.removeServer": {
+    request: z.object({ serverId: z.uuid() }),
+    response: z.object({ ok: z.literal(true) }),
+  },
+
+  /**
+   * Stops the process and leaves the row. A crashed server is killed and its tools listed
+   * again; a mistake in the command is removed rather than killed.
+   */
+  "mcp.killServer": {
+    request: z.object({ serverId: z.uuid() }),
+    response: z.object({ ok: z.literal(true) }),
+  },
+
+  /**
+   * Starts the server if it is not running, initialises, and asks for `tools/list`. A
+   * server that cannot be started or does not answer within the timeout is an error with
+   * a code, never a hang.
+   */
+  "mcp.listTools": {
+    request: z.object({ serverId: z.uuid() }),
+    response: z.object({ tools: z.array(McpToolSchema) }),
+  },
+
+  /**
+   * Asks to run one tool. **Nothing runs.** The request is recorded as a pending approval
+   * and the id comes back; the tool runs only when `mcp.resolveApproval` is told to allow
+   * it, and every call needs its own approval — there is no "remember this".
+   *
+   * `args` is the tool's own argument object, passed through unchanged. It is the one part
+   * of this contract that can carry a secret, which is why nothing logs it.
+   */
+  "mcp.requestToolCall": {
+    request: z.object({
+      serverId: z.uuid(),
+      tool: z.string().min(1).max(200),
+      args: z.record(z.string(), z.unknown()),
+    }),
+    response: z.object({ approvalId: z.uuid() }),
+  },
+
+  /**
+   * The only path from an approval to an executed tool.
+   *
+   * `denied` is a result, not an error: the user refusing is a decision that was carried
+   * out, and it is recorded. `failed` means the call was allowed and did not complete —
+   * a timeout, a crash, or a JSON-RPC error — and carries the reason in `error`.
+   */
+  "mcp.resolveApproval": {
+    request: z.object({ approvalId: z.uuid(), allow: z.boolean() }),
+    response: z.object({
+      status: z.enum(["executed", "denied", "failed"]),
+      /** The server's own `tools/call` result, verbatim. Present only when executed. */
+      result: z.unknown().optional(),
+      /** Why a `failed` call failed. Present only when failed. */
+      error: z.string().optional(),
+    }),
   },
 } as const satisfies Record<ChannelName, Contract>;
 
