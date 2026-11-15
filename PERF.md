@@ -3,13 +3,13 @@
 Measured by `pnpm perf` (`scripts/perf/measure.mjs`), which is the only source of the
 numbers below. Nothing here is estimated or rounded up.
 
-- **Date:** 2026-11-15T20:22:39.214Z
+- **Date:** 2026-11-15T20:29:43.623Z
 - **Machine:** Apple M5 · 10 cores · 24 GB RAM · darwin 27.2.0
 - **Runtime:** Node v24.12.0 · SQLite 3.54.1 (via `better-sqlite3`)
 - **Schema:** v7
 - **Corpus:** 500 threads × 10 messages
   (5000 message rows, 5000 FTS5 rows), seeded in
-  264 ms through the app's own repository layer
+  273 ms through the app's own repository layer
 
 ## Method
 
@@ -37,14 +37,14 @@ pays for.
 
 | Measurement | p50 | p95 | n |
 |---|---|---|---|
-| `threads.list` (cold) | — | — | 1 (0.97 ms) |
-| `threads.list` (warm) | 0.57 ms | **0.64 ms** | 200 |
-| FTS search `"heron"` | 6.65 ms | **6.91 ms** | 200 |
-| `chat.thread` (10 messages) | 0.14 ms | **0.17 ms** | 200 |
+| `threads.list` (cold) | — | — | 1 (1.01 ms) |
+| `threads.list` (warm) | 0.57 ms | **0.65 ms** | 200 |
+| FTS search `"heron"` | 6.64 ms | **6.91 ms** | 200 |
+| `chat.thread` (10 messages) | 0.13 ms | **0.17 ms** | 200 |
 
-Min/max over the same samples: `threads.list` 0.55 ms–2.12 ms,
-search 6.48 ms–7.67 ms, `chat.thread`
-0.11 ms–0.72 ms.
+Min/max over the same samples: `threads.list` 0.56 ms–2.06 ms,
+search 6.47 ms–7.99 ms, `chat.thread`
+0.12 ms–1.81 ms.
 
 ## G2's target: p95 < 100 ms
 
@@ -66,9 +66,9 @@ renderer for the duration. `scrollTop` went from 0 to 9600 of a
 
 | | value |
 |---|---|
-| Worst frame gap | **18.80 ms** |
+| Worst frame gap | **18.70 ms** |
 | p50 gap | 16.70 ms |
-| p95 gap | 18.07 ms |
+| p95 gap | 18.17 ms |
 | Frames sampled | 64 |
 
 **This is a proxy, not a profiler trace.** It says no frame took longer than the worst gap

@@ -49,6 +49,13 @@ const NO_OPTIONS: readonly ModelOption[] = [];
  * back to where they were, which is the classic "my place is gone" bug. Restoring to the
  * newest enabled arrow keeps the switcher usable for a second press.
  *
+ * **When this runs matters as much as what it does.** The first version called it from a
+ * `requestAnimationFrame` right after `reloadThread()`, which is a race: on a fast machine
+ * the commit landed first, on CI it did not, and the callback focused the *old* arrow a
+ * fraction of a frame before React removed it — leaving focus on the body, which is the
+ * exact bug this is meant to fix. It is now called from an effect keyed on
+ * `variantFocusNonce` (below), which React runs after the commit that drew the new rows.
+ *
  * Guarded on focus having actually been lost — inside the transcript (the vanished
  * control's neighbourhood) or on the body. A user who moved to the composer while the
  * answer streamed must not have the caret pulled out of it.
@@ -131,6 +138,12 @@ export function App(): React.JSX.Element {
   const [assistantId, setAssistantId] = useState<string | null>(null);
   const [projectId, setProjectId] = useState<string | null>(null);
   const [libraryOpen, setLibraryOpen] = useState(false);
+  /**
+   * Bumped when a re-read has replaced the rows on screen, so the effect below can put
+   * keyboard focus back on the switcher *after* React has committed them. The value itself
+   * is meaningless; it is a render-phase signal, not state a user sees.
+   */
+  const [variantFocusNonce, setVariantFocusNonce] = useState(0);
   const [promptInsert, setPromptInsert] = useState<PromptInsertion | null>(null);
   const [mcpOpen, setMcpOpen] = useState(false);
   const [knowledgeOpen, setKnowledgeOpen] = useState(false);
@@ -178,13 +191,22 @@ export function App(): React.JSX.Element {
       void queryClient.invalidateQueries({ queryKey: THREAD_LIST_KEY });
       if (refreshAfterStream.current) {
         refreshAfterStream.current = false;
-        // Focus comes back after the re-read has actually painted: the row that held it
-        // is replaced by the new variant, so there is nothing to focus before that.
-        void reloadThread().then(() => requestAnimationFrame(focusVariantControl));
+        // Focus comes back once the re-read has been rendered: the row that held it is
+        // replaced by the new variant, so there is nothing to focus before that.
+        void reloadThread().then(() => setVariantFocusNonce((nonce) => nonce + 1));
       }
     }
     wasStreaming.current = streamingNow;
   }, [streaming, queryClient, reloadThread]);
+
+  /**
+   * The focus restore, run from an effect rather than from the event handler, because an
+   * effect is the first moment React guarantees the replaced rows are in the DOM.
+   */
+  useEffect(() => {
+    if (variantFocusNonce === 0) return;
+    focusVariantControl();
+  }, [variantFocusNonce]);
 
   // One subscription for the life of the window; the unsubscribe runs on unmount.
   useEffect(() => subscribeToGenerationEvents(applyEvent), [applyEvent]);
@@ -295,7 +317,7 @@ export function App(): React.JSX.Element {
         await reloadThread();
         // The message that was on screen is replaced by its sibling, so the arrow that
         // was pressed no longer exists. Put focus back on the switcher that does.
-        requestAnimationFrame(focusVariantControl);
+        setVariantFocusNonce((nonce) => nonce + 1);
       } finally {
         setSwitching(false);
       }
