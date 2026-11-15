@@ -170,3 +170,26 @@ export function setApiKey(key: string): Promise<IpcResult<ResponseOf<"secrets.se
 export function clearApiKey(): Promise<IpcResult<ResponseOf<"secrets.clearKey">>> {
   return invokeSettled("secrets.clearKey", {});
 }
+
+/* ------------------------------------------------------ D4 attachments */
+
+/**
+ * Copies the files at these absolute paths into main's attachments directory and answers
+ * with their metadata. The renderer sends paths it was handed; it never reads the bytes.
+ */
+export function addAttachments(
+  paths: readonly string[],
+): Promise<IpcResult<ResponseOf<"attachments.add">>> {
+  return invokeSettled("attachments.add", { paths: [...paths] });
+}
+
+/**
+ * A thumbnail for a small image, or `{ dataUrl: null }`. Settled rather than thrown: a chip
+ * that cannot get a picture still has a filename to show, so a failed preview must not take
+ * the composer down with it.
+ */
+export function previewAttachment(
+  id: string,
+): Promise<IpcResult<ResponseOf<"attachments.preview">>> {
+  return invokeSettled("attachments.preview", { id });
+}

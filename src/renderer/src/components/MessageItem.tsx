@@ -1,6 +1,7 @@
 import type { VariantGroup } from "../lib/variants";
 import type { ChatMessageView } from "../store/chat-store";
 import { Markdown } from "./Markdown";
+import { MessageAttachments } from "./MessageAttachments";
 import { ReasoningBlock } from "./ReasoningBlock";
 import { ToolRows } from "./ToolRows";
 import { UsageMeter } from "./UsageMeter";
@@ -13,6 +14,10 @@ import { VariantSwitcher } from "./VariantSwitcher";
  *
  * D3 adds the footer: the sibling count when this answer is one of several, the
  * regenerate affordance on the newest answer, and the meters when one exists.
+ *
+ * D4 adds the attachments above the user's text. They are metadata only — the chip asks
+ * for its own thumbnail when it has one — so a message with three photographs still costs
+ * the transcript three rows and no bytes.
  */
 export function MessageItem({
   message,
@@ -32,7 +37,10 @@ export function MessageItem({
   if (message.role === "user") {
     return (
       <article className="msg msg-user" data-role="user">
-        <div className="bubble bubble-user">{message.text}</div>
+        <div className="bubble bubble-user">
+          <MessageAttachments attachments={message.attachments ?? []} />
+          {message.text}
+        </div>
       </article>
     );
   }

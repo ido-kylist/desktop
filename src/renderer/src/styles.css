@@ -579,7 +579,11 @@ body {
 
 .composer {
   flex: 0 0 auto;
+  /* A fieldset, for the grouped controls: the default frame and margins are not wanted. */
+  border: 0;
   border-top: 1px solid var(--line);
+  margin: 0;
+  min-width: 0;
   padding: 12px 22px 14px;
   background: var(--bg);
 }
@@ -907,4 +911,145 @@ body {
 
 .muted {
   color: var(--muted);
+}
+
+/* ---------------------------------------------------------- D4 attachments */
+
+/*
+ * A chip is one file: a mark or a thumbnail, its name, its size, and — while it is
+ * still the composer's — a way to take it back. The list wraps rather than scrolls:
+ * ten chips are a short paragraph, and a scroller inside a composer fights the caret.
+ */
+.attach-list {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+}
+
+.attach-pending {
+  max-width: 780px;
+  margin: 0 auto 8px;
+}
+
+/* On a sent turn the chips sit above the text, inside the bubble. */
+.bubble-user .attach-list {
+  margin-bottom: 8px;
+}
+
+.attach-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 240px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--panel);
+  padding: 5px 7px;
+  min-width: 0;
+}
+
+.attach-mark {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  background: #1a1f2b;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.attach-thumb {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  object-fit: cover;
+  border: 1px solid var(--line);
+}
+
+.attach-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.25;
+}
+
+.attach-name {
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attach-size {
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.attach-remove,
+.attach-problem-close {
+  -webkit-app-region: no-drag;
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.attach-remove:hover,
+.attach-problem-close:hover {
+  color: var(--text);
+  background: #202636;
+}
+
+/*
+ * One refusal per reason. The same element with a different message, because the
+ * user's next move differs: shrink the file, send fewer, pick another format.
+ */
+.attach-problem {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  max-width: 780px;
+  margin: 0 auto 8px;
+  border: 1px solid color-mix(in srgb, var(--bad) 40%, var(--line));
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--bad) 8%, var(--panel));
+  padding: 7px 9px;
+  font-size: 12px;
+}
+
+.attach-problem-title {
+  flex: 0 0 auto;
+  color: var(--bad);
+  font-weight: 600;
+}
+
+.attach-problem-detail {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+/* The whole composer is the drop target; the border says so while a file is over it. */
+.composer[data-dragging="true"] .composer-input {
+  border-color: var(--accent);
+  background: #151b27;
+}
+
+.btn-attach {
+  font-size: 15px;
+  line-height: 1;
+  padding: 5px 9px;
 }

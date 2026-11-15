@@ -1,4 +1,4 @@
-import type { ErrorCode, GenerationEvent, IpcError } from "@shared/ipc-contract";
+import type { Attachment, ErrorCode, GenerationEvent, IpcError } from "@shared/ipc-contract";
 import { create } from "zustand";
 import type { Usage } from "../lib/format";
 
@@ -40,6 +40,12 @@ export interface ChatMessageView {
    * absence, not zero, and the UI renders nothing rather than inventing `$0.0000`.
    */
   usage?: Usage | null;
+  /**
+   * D4: files attached to this turn, metadata only. Absent means "none" — the contract
+   * makes the field optional on `chat.thread`, and a message written before D4 has no
+   * attachments to report.
+   */
+  attachments?: Attachment[];
 }
 
 export interface StreamingState {
@@ -54,6 +60,8 @@ export interface TurnStart {
   generationId: string;
   text: string;
   createdAt: string;
+  /** D4: what was attached to this turn, so its chips appear before a reload would. */
+  attachments?: Attachment[];
 }
 
 export interface ChatState {
@@ -316,6 +324,9 @@ export const useChatStore = create<ChatState>()((set) => ({
         generationId: null,
         errorCode: null,
         lastSeq: 0,
+        ...(turn.attachments === undefined || turn.attachments.length === 0
+          ? {}
+          : { attachments: turn.attachments }),
       };
 
       const rest = state.messages.filter(

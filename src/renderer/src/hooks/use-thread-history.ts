@@ -37,6 +37,11 @@ function toMessageView(message: ResponseOf<"chat.thread">["messages"][number]): 
     errorCode: message.errorCode,
     lastSeq: 0,
     usage: message.usage ?? null,
+    // D4: absent on a message written before attachments existed, and on one that has
+    // none. Both mean the same thing to the UI, so the empty case stays absent.
+    ...(message.attachments === undefined || message.attachments.length === 0
+      ? {}
+      : { attachments: message.attachments }),
   };
 }
 
