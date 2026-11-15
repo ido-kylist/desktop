@@ -2,6 +2,7 @@ import type { IpcError, KnowledgeHit } from "@shared/ipc-contract";
 import { useQueryClient } from "@tanstack/react-query";
 import type { ChangeEvent } from "react";
 import { useRef, useState } from "react";
+import { useDialogFocus } from "../hooks/use-dialog-focus";
 import {
   KNOWLEDGE_LIST_KEY,
   type KnowledgeDocumentView,
@@ -14,6 +15,7 @@ import {
   unresolvedPathsProblem,
 } from "../lib/attachments";
 import { buildCatalog, type Catalog } from "../lib/catalogs";
+import { isProviderUnreachable, OFFLINE_TITLE } from "../lib/connectivity";
 import {
   addKnowledgeDocuments,
   deleteKnowledgeDocument,
@@ -59,6 +61,8 @@ export function KnowledgePanel({ onClose }: { onClose: () => void }): React.JSX.
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<KnowledgeHit[] | null>(null);
   const picker = useRef<HTMLInputElement | null>(null);
+  const panel = useRef<HTMLElement | null>(null);
+  useDialogFocus(panel, onClose);
 
   const catalog: Catalog<KnowledgeDocumentView> = buildCatalog({
     loading: documents.isPending,
@@ -138,8 +142,15 @@ export function KnowledgePanel({ onClose }: { onClose: () => void }): React.JSX.
 
   return (
     <div className="library-backdrop" data-testid="kb-panel">
-      <section className="library kb" role="dialog" aria-modal="true" aria-label="Knowledge base">
-        <header className="library-head">
+      <section
+        className="library kb"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Knowledge base"
+        ref={panel}
+        tabIndex={-1}
+      >
+        <div className="library-head">
           <h2>Knowledge</h2>
           <span className="mcp-kicker">indexed locally · searched on this machine</span>
           <button
@@ -161,7 +172,7 @@ export function KnowledgePanel({ onClose }: { onClose: () => void }): React.JSX.
           >
             ✕
           </button>
-        </header>
+        </div>
 
         <div className="library-form">
           <input
@@ -197,7 +208,15 @@ export function KnowledgePanel({ onClose }: { onClose: () => void }): React.JSX.
         )}
 
         {error !== null && (
-          <p className="sidebar-error" role="alert" data-testid="kb-error">
+          <p
+            className="sidebar-error"
+            role="alert"
+            data-testid="kb-error"
+            data-state={isProviderUnreachable(error) ? "offline" : "failed"}
+          >
+            {isProviderUnreachable(error) && (
+              <strong className="offline-title">{OFFLINE_TITLE}</strong>
+            )}
             <span className="banner-code">{error.code}</span> {error.message}
           </p>
         )}

@@ -156,3 +156,28 @@ Work consciously deferred. Nothing here is a surprise in a demo, because it is w
   proven end to end (`tests/e2e/knowledge.spec.ts`) and the storage layer in the integration
   suites; the panels' own loading/error/empty states have no renderer harness, as with D6 and
   D7.
+
+## Deferred from D9 — accessibility, states, performance
+
+- **No focus trap inside modal panels.** `useDialogFocus` moves focus into a panel on open,
+  returns it to the opener on close, and Escape dismisses it — but `Tab` can still walk out of
+  the panel and into the page behind it. A trap (or `inert` on the shell) is the complete
+  answer and touches every panel's structure; it is not a one-line change.
+- **No network-status push.** "Provider unreachable" is discovered by the next request
+  failing. A `navigator.onLine` listener would say it sooner and would also be wrong about
+  the provider (an interface being up is not the same as an endpoint answering), so the state
+  stays request-driven until there is a reason to change it.
+- **Two error states are rendered but not driven end to end.** `settings-load-error` needs a
+  locked keychain and the sidebar's `thread-list-error` needs a failure in a local read;
+  neither can be produced from outside the app without a broken platform. They are listed in
+  `docs/STATES.md` as uncovered rather than counted as covered.
+- **The G2 frame clause is still a proxy.** `pnpm perf` reports the worst
+  `requestAnimationFrame` gap while scrolling the sidebar; it cannot attribute a long frame to
+  script, layout or paint. A real trace (`chrome://tracing` or `PerformanceObserver` long
+  tasks) is the next step if the number ever looks bad.
+- **Perf runs on one machine.** The corpus is deterministic and the harness is repeatable, but
+  the numbers in `PERF.md` describe this laptop. A CI comparison needs a runner with a pinned
+  machine and a stored baseline, which is a bigger commitment than one script.
+- **axe is a devDependency only.** The audit runs in Playwright against the built app. There is
+  no accessibility check in the renderer's own test suite, so a component change is only
+  audited when the e2e runs.

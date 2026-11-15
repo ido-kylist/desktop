@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
 import { useModelCatalog } from "../hooks/use-model-catalog";
 import { SETTINGS_KEY, useSettings } from "../hooks/use-settings";
+import { isProviderUnreachable, OFFLINE_DETAIL, OFFLINE_TITLE } from "../lib/connectivity";
 import { clearApiKey, setApiKey, setSettings, toIpcError } from "../lib/ipc";
 import { describeCatalog, type ModelCatalog } from "../lib/models";
 import {
@@ -181,9 +182,22 @@ export function SettingsScreen({
   const catalogLine = describeCatalog(catalog);
   const probeLine = probeResult === null ? null : describeCatalog(probeResult);
   const missingKey = form === null ? null : missingKeyNote(form.hasKey);
+  /**
+   * The provider is down as opposed to refusing: `models.list` answers a fallback
+   * catalogue rather than failing (a screen with no models at all would be less useful
+   * than one with a stale list), and a fallback source is exactly that answer. The
+   * catalogue's own line already says "the endpoint did not answer"; this states it as a
+   * state, with the one thing the user needs to know — nothing they typed is lost.
+   */
+  const providerOffline =
+    catalog.state === "error"
+      ? isProviderUnreachable(catalog.error)
+      : catalog.state === "empty" || catalog.state === "ready"
+        ? catalog.source === "fallback"
+        : false;
 
   return (
-    <section className="settings" aria-label="Settings" data-testid="settings">
+    <main className="settings" aria-label="Settings" data-testid="settings">
       <header className="settings-head">
         <h2>Settings</h2>
         <p className="muted">
@@ -223,6 +237,16 @@ export function SettingsScreen({
           <p className="settings-error" role="alert" data-testid="settings-action-error">
             <span className="banner-code">{actionError.code}</span> {actionError.message}
           </p>
+        )}
+
+        {/* The offline state, kept apart from both the read failure above and the
+            per-action errors: nothing the user did was wrong, and nothing they saved is
+            at risk — the endpoint simply did not answer. */}
+        {providerOffline && (
+          <output className="settings-offline" data-testid="settings-offline" data-state="offline">
+            <strong>{OFFLINE_TITLE}</strong> — {OFFLINE_DETAIL} The model list below is a built-in
+            fallback until it answers.
+          </output>
         )}
 
         {form !== null && (
@@ -426,6 +450,6 @@ export function SettingsScreen({
           </>
         )}
       </div>
-    </section>
+    </main>
   );
 }

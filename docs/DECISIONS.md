@@ -441,3 +441,75 @@ v7 tables and `messages.citations_json` exist after upgrading a real v1 database
 
 **No new dependency.** Chunking is a function over a string, cosine is a loop, the vector codec is
 `Buffer`, and the UI is components that were already there.
+
+## D9 — axe-core, and the states and measurements behind it
+
+**One dependency, and only one: `axe-core` 4.14.0 (dev).** The brief allowed it, and the
+alternative was worse: every claim about labels, roles and contrast would be an assertion
+by the person who wrote the markup, verified by nobody. axe runs the WCAG 2.0/2.1 A+AA rule
+sets plus its own best-practice rules in the real renderer on the real build
+(`tests/e2e/a11y.spec.ts`), and the gate is zero serious/critical violations on five screens.
+It is a devDependency: nothing about it ships.
+
+**axe is injected without weakening the CSP.** The renderer ships `script-src 'self'`, so
+`page.addScriptTag` — which appends an inline `<script>` — is refused by Chromium. That was
+verified, not assumed: the first attempt failed with the CSP violation in the runner log. The
+choice was between loosening the policy for a test and loading axe another way. Loosening it
+was not an option: invariant 1 and the CSP are the reason a model's output cannot execute.
+So axe is installed with `addInitScript`, which Playwright delivers through the debugger
+protocol before the document's own scripts and is therefore outside the page's CSP. The cost
+is one reload before the audit, which is safe in a local-first app that restores the selected
+thread from storage.
+
+**The audit has a negative control.** `a11y.spec.ts` plants an image with no alt and a link
+with no name and asserts axe reports `image-alt` and `link-name`. Without it, a typo in the
+axe install would turn four green audits into a green no-op, and nobody would know.
+
+**What axe found, and was fixed rather than suppressed.** Three real findings, all moderate:
+`landmark-one-main` on Settings (the screen was a `<section>`, so the document had no `main`
+landmark in that view — it is now `<main>`), and `landmark-no-duplicate-banner` plus
+`landmark-unique` on the panels (a `<header class="library-head">` inside a
+`<section role="dialog">` is counted as a second banner by axe — the panel title bars are
+`<div>`s now, and no AT has to reconcile two banners). The rest of the work was what axe
+cannot see: a single visible `:focus-visible` ring (seven text inputs, across five rules, used to
+suppress the outline and replace it with a 1.3:1 border tint), focus into and out of modals, and a live region on
+the streaming answer's body.
+
+**The live region is on the answer, not on the list.** `aria-live="polite"` and
+`aria-atomic="false"` sit on the one assistant body whose generation is live, for as long
+as it is live. A region around the transcript would re-announce every earlier turn on each
+token; a permanent region would announce a whole restored thread on open. Both are tested:
+exactly one polite region during a stream, on `.md`, and none afterwards.
+
+**"Provider unreachable" is derived, not a new error code.** The contract's closed set has
+no `OFFLINE`, and adding one is a protocol bump for a fact the payload already carries:
+`httpError()` always attaches `details.status` (the provider answered and refused), while a
+transport failure attaches `details.reason` and no status. `isProviderUnreachable()` encodes
+that rule once and every surface uses it. Matching on message text was the other candidate
+and would break the first time a message is reworded.
+
+**Focus is restored after a re-render, because the alternative is losing the user's place.**
+A variant switch and a regenerate both re-read the thread, and the re-read replaces the
+message row — the button that was pressed is unmounted and focus falls to `document.body`.
+`focusVariantControl()` puts it back on the newly enabled arrow, guarded so it only runs when
+focus was actually lost (inside the transcript or on the body) and never steals the caret out
+of the composer. The keyboard spec asserts the restore, and was checked to fail without it.
+
+**The perf harness compiles the database layer instead of copying its SQL.**
+`pnpm perf` runs `node scripts/perf/measure.mjs`, which `tsc`-compiles
+`src/main/db/**` + `src/main/errors.ts` to `scripts/perf/.build/` with a dedicated tsconfig
+and then imports it. Plain `node` cannot import `repo.ts` from a module that addresses its
+neighbours as `./client.js`, and the alternatives were both wrong: a second implementation of
+the queries would measure code that ships nowhere, and a new runtime (tsx/ts-node) is a
+dependency for a script. `tsc` is already there. The build output is gitignored.
+
+**Why `threads.list` and not the whole IPC round trip.** The measurement calls the repository
+function, which is what the handler calls; it does not go through Electron's IPC, so it
+excludes the serialise/postMessage/deserialise cost. That is deliberate — the gate's clause
+is about the query at 500 threads — but it is a real exclusion and it is written down in
+`PERF.md` rather than left for a reader to assume otherwise.
+
+**Why the frame number is called a proxy in every sentence that mentions it.** G2 says
+"60 fps". Proving that needs a profiler trace; this harness samples `requestAnimationFrame`
+gaps while the sidebar scrolls and reports the worst one. It supports "no frame took longer
+than N ms", not "the app runs at 60 fps", and the difference is stated where the number is.

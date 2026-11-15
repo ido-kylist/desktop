@@ -1,5 +1,6 @@
 import type { IpcError } from "@shared/ipc-contract";
 import { useEffect, useMemo, useState } from "react";
+import { isProviderUnreachable, OFFLINE_DETAIL, OFFLINE_TITLE } from "../lib/connectivity";
 
 function remainingMs(deadline: number | null): number {
   if (deadline === null) return 0;
@@ -17,6 +18,11 @@ function remainingMs(deadline: number | null): number {
  * `BUDGET_EXCEEDED` — the request will fail identically until the budget changes, so
  * offering a button would be a lie. For `RATE_LIMITED` the button stays visible but
  * disabled until `retryAfterMs` has elapsed, with the wait on screen.
+ *
+ * `UPSTREAM_ERROR` with no HTTP status is the provider being unreachable — a refused
+ * connection or a timeout rather than a refusal — and it is drawn as its own state
+ * (`data-state="offline"`). Retry stays: unlike a budget, a dropped connection is
+ * exactly the thing that comes back.
  */
 export function ErrorBanner({
   error,
@@ -47,13 +53,24 @@ export function ErrorBanner({
   }, [deadline]);
 
   const retryable = error.code !== "BUDGET_EXCEEDED" && retryText !== null;
+  const offline = isProviderUnreachable(error);
 
   return (
-    <div className="banner" role="alert" data-testid="error-banner">
+    <div
+      className="banner"
+      role="alert"
+      data-testid="error-banner"
+      data-state={offline ? "offline" : "failed"}
+    >
       <div className="banner-main">
         <span className="banner-code">{error.code}</span>
         <span className="banner-message">{error.message}</span>
       </div>
+      {offline && (
+        <span className="banner-note" data-testid="error-banner-offline">
+          {OFFLINE_TITLE} — {OFFLINE_DETAIL}
+        </span>
+      )}
       {remaining > 0 && (
         <span className="banner-countdown">Retry in {Math.ceil(remaining / 1000)}s</span>
       )}

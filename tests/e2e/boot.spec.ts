@@ -26,8 +26,12 @@ test("boots, handshakes, reaches sqlite", async () => {
 
     // Main reached SQLite with the FTS5 virtual table. The schema version is read
     // from the bridge rather than hardcoded: migrations land over time, and a
-    // literal here turns every migration into an unrelated test failure.
-    await expect(win.getByText("available")).toBeVisible({ timeout: 20_000 });
+    // literal here turns every migration into an unrelated test failure. Scoped to the
+    // diagnostics strip: "available" is also a word the composer's catalogue note uses,
+    // and an unscoped match now finds both.
+    await expect(win.locator(".diagnostics").getByText("available")).toBeVisible({
+      timeout: 20_000,
+    });
     const schemaVersion = await win.evaluate(async () => {
       const res = await (
         globalThis as unknown as {

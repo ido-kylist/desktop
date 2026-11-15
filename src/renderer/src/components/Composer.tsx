@@ -390,7 +390,13 @@ export function Composer({
               : `${activeAssistant.model} · temp ${activeAssistant.temperature}`}
           </output>
         )}
-        {assistantId === null && models.state !== "ready" && (
+        {/*
+          The catalogue's own state, whenever it is not a verified remote list. That
+          includes a *ready* fallback or mock list: those render options, and an option
+          that came from a built-in list has to say so — otherwise the select is
+          indistinguishable from a live one and the user picks a model that may not exist.
+        */}
+        {assistantId === null && catalogue.tone !== "ok" && (
           <output className={`composer-note ${catalogue.tone}`} data-testid="composer-model-note">
             {catalogue.text}
           </output>

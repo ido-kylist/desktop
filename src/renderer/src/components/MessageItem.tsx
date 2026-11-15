@@ -23,12 +23,17 @@ import { VariantSwitcher } from "./VariantSwitcher";
  * D8 adds the sources under an assistant answer: one chip per retrieved chunk, expanding to
  * the text it points at. They sit above the footer so the meter row stays the last thing in
  * the turn, and they render nothing at all for a turn that used no knowledge.
+ *
+ * `streaming` is true for exactly one turn at a time — the answer whose generation is live —
+ * and it is what makes the body a polite live region while tokens land. A restored answer
+ * has it false, so opening a thread announces nothing.
  */
 export function MessageItem({
   message,
   variant,
   canRegenerate,
   busy,
+  streaming,
   onSwitchVariant,
   onRegenerate,
 }: {
@@ -36,6 +41,7 @@ export function MessageItem({
   variant: VariantGroup | undefined;
   canRegenerate: boolean;
   busy: boolean;
+  streaming: boolean;
   onSwitchVariant: (messageId: string) => void;
   onRegenerate: () => void;
 }): React.JSX.Element {
@@ -61,11 +67,15 @@ export function MessageItem({
   const usage = message.usage ?? null;
 
   return (
-    <article className="msg msg-assistant" data-role="assistant">
+    <article
+      className="msg msg-assistant"
+      data-role="assistant"
+      {...(streaming ? { "data-streaming": "true" } : {})}
+    >
       {message.reasoning !== "" && <ReasoningBlock text={message.reasoning} />}
       {message.toolCalls.length > 0 && <ToolRows calls={message.toolCalls} />}
       {message.text !== "" ? (
-        <Markdown text={message.text} />
+        <Markdown text={message.text} live={streaming} />
       ) : (
         message.errorCode === null && <span className="muted">…</span>
       )}

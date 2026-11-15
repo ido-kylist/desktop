@@ -21,11 +21,12 @@ export function VariantSwitcher({
   const next = group.ids[group.index + 1];
 
   return (
-    <div className="variants">
+    <fieldset className="variants" aria-label="Answer variants">
       <button
         type="button"
         className="link-btn variant-arrow"
         aria-label="Previous variant"
+        data-testid="variant-prev"
         disabled={busy || previous === undefined}
         onClick={() => {
           if (previous !== undefined) onPick(previous);
@@ -40,6 +41,7 @@ export function VariantSwitcher({
         type="button"
         className="link-btn variant-arrow"
         aria-label="Next variant"
+        data-testid="variant-next"
         disabled={busy || next === undefined}
         onClick={() => {
           if (next !== undefined) onPick(next);
@@ -47,6 +49,6 @@ export function VariantSwitcher({
       >
         ›
       </button>
-    </div>
+    </fieldset>
   );
 }

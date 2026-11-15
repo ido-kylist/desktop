@@ -1,0 +1,19 @@
+{
+  "//": [
+    "The perf harness runs against the repo's own database layer, not a copy of its SQL.",
+    "The db modules and errors.ts are compiled to scripts/perf/.build with `tsc`, because",
+    "plain `node` cannot import a .ts file that its neighbours address as `./x.js`. tsc is",
+    "already a devDependency and adds nothing to install; the alternative was a second",
+    "implementation of the queries, which would measure code that ships nowhere."
+  ],
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "./.build",
+    "rootDir": "../..",
+    "declaration": false,
+    "sourceMap": false,
+    "removeComments": false
+  },
+  "include": ["../../src/main/db/**/*.ts", "../../src/main/errors.ts"]
+}
