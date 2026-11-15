@@ -1617,3 +1617,235 @@ body {
 .mcp-record-failed .mcp-record-status {
   color: #f87171;
 }
+
+/* ------------------------------------------------ D8: knowledge + artifacts */
+
+/* The per-turn knowledge switch sits with the pickers and reads as one of them. */
+.knowledge-toggle {
+  gap: 6px;
+  cursor: pointer;
+}
+
+.knowledge-toggle input {
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+/* Wider than the MCP panel: a knowledge row carries a path, a chunk count and a size. */
+.library.kb,
+.library.artifacts {
+  width: min(760px, 94vw);
+}
+
+/* --- search preview: the ranking with its numbers, because a score nobody sees is a
+   ranking nobody can debug. --- */
+
+.kb-hits {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 40vh;
+  overflow: auto;
+}
+
+.kb-hit {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-strong);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.kb-hit-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.kb-hit-source {
+  overflow-wrap: anywhere;
+}
+
+.kb-hit-score {
+  color: var(--accent);
+  font-size: 11px;
+}
+
+.kb-hit-text {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  /* A retrieved chunk can be 800 characters; the preview shows a readable slice of it. */
+  max-height: 9em;
+  overflow: hidden;
+}
+
+/* --- citation chips under an assistant answer --- */
+
+.citations {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.citations-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.citation-chips {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.citation-chip {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-strong);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 10px;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  cursor: pointer;
+  max-width: 280px;
+}
+
+.citation-chip:hover,
+.citation-chip[aria-expanded="true"] {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+}
+
+.citation-marker {
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.citation-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.citation-source {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.citation-source-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.citation-source-name {
+  overflow-wrap: anywhere;
+}
+
+.citation-text {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 14em;
+  overflow: auto;
+  color: var(--text);
+}
+
+/* --- artifacts: the version switcher --- */
+
+.artifact-versions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0 6px;
+}
+
+.version-switcher {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.version-pill {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-strong);
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+
+.version-pill[aria-current="true"] {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+  color: var(--text);
+}
+
+.artifact-readonly {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 8px 10px;
+  margin-bottom: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.artifact-content {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 24vh;
+  overflow: auto;
+}
+
+/* The read-only version's header: the note on the left, the way back on the right. */
+.artifact-readonly-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.artifact-readonly-head .field-note {
+  margin: 0;
+}

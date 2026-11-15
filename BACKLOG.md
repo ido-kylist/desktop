@@ -112,3 +112,47 @@ Work consciously deferred. Nothing here is a surprise in a demo, because it is w
 - **No component-level tests for the MCP panel.** The approval card's blocking behaviour is
   proven end to end in `tests/e2e/mcp.spec.ts` and the gate itself in the integration suite;
   the panel's own states (loading, error, empty) have no renderer harness, as with D6.
+
+## D8 — knowledge and versioned artifacts
+
+- **No ANN index; retrieval is a linear scan.** Every chunk's vector is read, scored and
+  sorted in main. That is O(n) and correct for a local corpus of a few thousand chunks; an
+  ANN index (HNSW, IVF, or `sqlite-vec`) is a second structure to build, persist, invalidate
+  and explain, and it is explicitly out of scope for this slice. The upgrade point is
+  `KnowledgeService.search`: it is the only caller of `listChunksForSearch`.
+- **PDFs are refused, not indexed.** A PDF's bytes are compressed streams, and honest text
+  extraction needs a parser or OCR — neither is in this slice's dependency budget. The file
+  is refused by name with `reason: "not_readable_text"`, and the panel says so. `docx`,
+  `html` and `rtf` are in the same position.
+- **Re-adding a file is a CONFLICT, not a re-index.** The `source_path` unique index refuses
+  the duplicate, so an edited document must be removed first. Atomic replacement
+  (delete + insert in one transaction) is the affordance missing here, and it wants a
+  decision about what happens to citations that point into the old chunks.
+- **No dedupe of content.** Two files with identical text are two documents, two copies and
+  two embedding bills. A content hash column would fix it, and that is a schema change with
+  a backfill.
+- **Citations are metadata only; the text is read on demand.** `chat.thread` returns four
+  fields per citation and `kb.readChunk` fetches the text when a chip expands. A deleted
+  document therefore leaves a chip that reports NOT_FOUND rather than a stale copy of text
+  that no longer exists anywhere else.
+- **`kb.search` has no `documentIds`.** The answer path narrows retrieval inside `chat.send`,
+  which is where the contract puts the scope. The panel searches everything, and a per-document
+  scope in the preview wants its own contract field.
+- **Knowledge is a per-turn toggle, not a setting.** It is not persisted, so a relaunch turns
+  it off. That is deliberate — a mode nobody remembers enabling is worse than a checkbox —
+  but a "default on for this thread" wants a column.
+- **Artifacts are not shown inline in the transcript.** They are a panel: list, versions,
+  editor. Rendering the current version under an assistant message, or letting the model
+  write one, is a D9-sized feature (a tool call, a permission, a diff view).
+- **Saving always writes a version, even when the text is unchanged.** A save is the user
+  saying "this is the version I mean"; suppressing identical content would make the version
+  numbers lie about how many edits happened. It does cost a row per save.
+- **No delete for an artifact.** The panel creates and appends but does not remove an
+  artifact or a version. Append-only is what makes a version switcher trustworthy, and a
+  delete wants a confirmation flow and a decision about what a hole in the sequence means.
+- **Artifacts are thread-scoped and not exported.** There is no export to a file, no
+  markdown download, and no way to move an artifact between threads.
+- **No component-level tests for the knowledge or artifacts panels.** The knowledge flow is
+  proven end to end (`tests/e2e/knowledge.spec.ts`) and the storage layer in the integration
+  suites; the panels' own loading/error/empty states have no renderer harness, as with D6 and
+  D7.

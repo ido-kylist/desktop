@@ -26,7 +26,7 @@ import {
   shell,
 } from "electron";
 import { GenerationBus } from "./api/bus.js";
-import { resolveBaseUrl } from "./api/client.js";
+import { type InferenceConfig, resolveBaseUrl } from "./api/client.js";
 import { GenerationService, type GenerationSink } from "./api/generations.js";
 import { listModels } from "./api/models.js";
 import { attachmentsRoot, createAttachmentHandlers } from "./attachments/handlers.js";
@@ -42,6 +42,7 @@ import {
   softDeleteThread,
   updateThread,
 } from "./db/repo.js";
+import { getArtifactHistory, listArtifacts, saveArtifact } from "./db/repo-artifacts.js";
 import {
   archiveAssistant,
   createAssistant,
@@ -52,6 +53,8 @@ import { attachToUserMessage, listAttachmentsForMessages } from "./db/repo-attac
 import { createProject, listProjects, updateProject } from "./db/repo-projects.js";
 import { createPrompt, deletePrompt, listPrompts, updatePrompt } from "./db/repo-prompts.js";
 import { AppError, toIpcError } from "./errors.js";
+import { embeddingModelOrDefault, KnowledgeService } from "./knowledge/service.js";
+import { knowledgeRoot } from "./knowledge/sources.js";
 import { McpManager } from "./mcp/manager.js";
 import { registerNativeAppHooks, showLauncher } from "./native/handlers.js";
 import { type SecretBackend, type SecretStore, SecretsService } from "./secrets.js";
@@ -99,6 +102,7 @@ let orm: DrizzleDb | null = null;
 let secrets: SecretsService | null = null;
 let generations: GenerationService | null = null;
 let mcp: McpManager | null = null;
+let knowledge: KnowledgeService | null = null;
 
 function getDb(): ReturnType<typeof openDatabase> {
   if (!db) db = openDatabase(defaultDbPath(app.getPath("userData")));
@@ -162,28 +166,61 @@ function getSecrets(): SecretsService {
 }
 
 /**
- * The inference service, over the shared connection and Drizzle handle.
+ * The provider settings, resolved once per call.
  *
- * The API key is read per turn rather than captured once, so replacing it takes
- * effect on the next message instead of the next launch. The base URL is resolved
- * per turn for the same reason: a URL typed into Settings has to work without a
- * relaunch. An unconfigured base URL surfaces from `resolveBaseUrl` inside the turn,
- * where it becomes an error event on a generation that is already persisted — the
- * user's message is not lost to a configuration mistake.
+ * Read per turn rather than captured at startup: a URL typed into Settings has to work
+ * without a relaunch, and the key lives in secure storage and can be replaced between
+ * turns. An unconfigured base URL surfaces from `resolveBaseUrl` **inside** the turn,
+ * where it becomes an error event on a generation that is already persisted — the user's
+ * message is not lost to a configuration mistake.
  */
+async function inferenceConfig(): Promise<InferenceConfig> {
+  return {
+    baseUrl: resolveBaseUrl({
+      isPackaged: app.isPackaged,
+      env: process.env,
+      storedBaseUrl: getSettings(getOrm()).baseUrl,
+    }),
+    apiKey: await getSecrets().getApiKey(),
+  };
+}
+
+/**
+ * The knowledge base (D8), over the shared connection.
+ *
+ * One resolver for both halves it needs: the same base URL and key the chat transport uses
+ * (an embedding endpoint is part of the same provider), plus the embedding model from
+ * settings. Reading them through `inferenceConfig` rather than a second copy is what keeps
+ * "which endpoint am I talking to" a single answer.
+ */
+function getKnowledge(): KnowledgeService {
+  if (!knowledge) {
+    knowledge = new KnowledgeService({
+      db: getOrm(),
+      rootDir: knowledgeRoot(app.getPath("userData")),
+      resolveConfig: async () => ({
+        config: await inferenceConfig(),
+        model: embeddingModelOrDefault(getSettings(getOrm()).embeddingModel),
+      }),
+    });
+  }
+  return knowledge;
+}
+
 function getGenerations(): GenerationService {
   if (!generations) {
     generations = new GenerationService({
       db: getOrm(),
       bus: new GenerationBus(),
-      resolveConfig: async () => ({
-        baseUrl: resolveBaseUrl({
-          isPackaged: app.isPackaged,
-          env: process.env,
-          storedBaseUrl: getSettings(getOrm()).baseUrl,
-        }),
-        apiKey: await getSecrets().getApiKey(),
-      }),
+      resolveConfig: inferenceConfig,
+      /**
+       * D8: retrieval is reached through the one knowledge service, so a turn cites exactly
+       * the chunks the panel would search. A second retrieval path would be a second answer
+       * to "what does this corpus say", and the two would drift.
+       */
+      knowledge: {
+        retrieve: (input) => getKnowledge().retrieve(input),
+      },
     });
   }
   return generations;
@@ -255,6 +292,12 @@ function readThread(threadId: string): ResponseOf<"chat.thread"> {
       variants: message.variants,
       usage: message.usage,
       attachments: attachments.get(message.id) ?? [],
+      /**
+       * D8: the citation list the answer was written with, so a restored thread draws the
+       * same chips it drew live. Absent rather than empty when the turn used no knowledge —
+       * the same shape rule attachments follow.
+       */
+      ...(message.citations.length === 0 ? {} : { citations: message.citations }),
     })),
     activeLeafId: tree.activeLeafId,
   };
@@ -292,6 +335,9 @@ async function settingsResponse(stored: StoredSettings): Promise<ResponseOf<"set
   return {
     baseUrl: stored.baseUrl,
     defaultModel: stored.defaultModel,
+    // D8: the effective model, not the stored one: a screen that showed null would be
+    // showing a state retrieval is never in.
+    embeddingModel: embeddingModelOrDefault(stored.embeddingModel),
     hasKey: masked !== null,
     masked,
   };
@@ -378,6 +424,10 @@ const handlers: { [C in ChannelName]: Handler<C> } = {
         ...(payload.model === undefined ? {} : { model: payload.model }),
         assistantId: payload.assistantId,
         projectId: payload.projectId,
+        // D8: same rule — absent is "no knowledge", and the service is the one that decides
+        // what true means. Nothing is defaulted on the way through.
+        ...(payload.useKnowledge === undefined ? {} : { useKnowledge: payload.useKnowledge }),
+        ...(payload.documentIds === undefined ? {} : { documentIds: payload.documentIds }),
       },
       generationSink(event.sender),
     );
@@ -441,6 +491,7 @@ const handlers: { [C in ChannelName]: Handler<C> } = {
       setSettings(getOrm(), {
         baseUrl: payload.baseUrl,
         defaultModel: payload.defaultModel,
+        embeddingModel: payload.embeddingModel,
       }),
     ),
 
@@ -532,6 +583,52 @@ const handlers: { [C in ChannelName]: Handler<C> } = {
 
   /** The only path from an approval to a tool call, and the only one that spawns on `allow`. */
   "mcp.resolveApproval": (payload) => getMcp().resolveApproval(payload),
+
+  /* ------------------------------------------------------------ D8: knowledge */
+
+  /**
+   * Copies, chunks, embeds and records. Awaited in full: a document is either indexed —
+   * with its chunks, its count and its copy — or it is not, and the panel must not show a
+   * row whose vectors are still arriving.
+   */
+  "kb.addDocument": async ({ paths }) => ({
+    documents: await getKnowledge().addDocuments(paths),
+  }),
+
+  "kb.listDocuments": () => getKnowledge().list(),
+
+  "kb.deleteDocument": ({ documentId }) => getKnowledge().deleteDocuments(documentId),
+
+  "kb.search": ({ query, limit }) =>
+    getKnowledge()
+      .search({ query, limit })
+      .then((chunks) => ({ chunks })),
+
+  "kb.readChunk": ({ chunkId }) => ({ chunk: getKnowledge().readChunk(chunkId) }),
+
+  /* ------------------------------------------------------------ D8: artifacts */
+
+  "artifacts.list": ({ threadId }) => listArtifacts(getOrm(), threadId),
+
+  /**
+   * The artifact and its whole history, or NOT_FOUND. The read is one call because a version
+   * switcher needs all the versions at once, and a second channel for them would be a second
+   * place for the two reads to disagree.
+   */
+  "artifacts.get": ({ artifactId }) => {
+    const history = getArtifactHistory(getOrm(), artifactId);
+    if (history === null) {
+      throw new AppError("NOT_FOUND", "artifact not found", { details: { artifactId } });
+    }
+    return history;
+  },
+
+  /**
+   * A new version, always. `artifactId: null` creates the artifact; an id appends. The
+   * response is the row the database wrote, so the panel shows the version number that was
+   * actually assigned rather than the one the form guessed.
+   */
+  "artifacts.save": (payload) => saveArtifact(getOrm(), payload),
 };
 
 export function registerIpc(): void {

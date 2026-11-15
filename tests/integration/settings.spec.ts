@@ -66,7 +66,7 @@ function settingCount(): number {
 
 describe("settings storage", () => {
   it("reports nothing configured before anything is written", () => {
-    expect(getSettings(db)).toEqual({ baseUrl: null, defaultModel: null });
+    expect(getSettings(db)).toEqual({ baseUrl: null, defaultModel: null, embeddingModel: null });
   });
 
   it("round-trips both keys", () => {
@@ -75,6 +75,7 @@ describe("settings storage", () => {
     expect(getSettings(db)).toEqual({
       baseUrl: "https://api.example.com",
       defaultModel: "gpt-4o",
+      embeddingModel: null,
     });
     expect(settingRow("base_url")?.value).toBe("https://api.example.com");
     expect(settingRow("default_model")?.value).toBe("gpt-4o");
@@ -101,14 +102,22 @@ describe("settings storage", () => {
 
     const after = setSettings(db, { baseUrl: "https://other.example.com" });
 
-    expect(after).toEqual({ baseUrl: "https://other.example.com", defaultModel: "gpt-4o" });
+    expect(after).toEqual({
+      baseUrl: "https://other.example.com",
+      defaultModel: "gpt-4o",
+      embeddingModel: null,
+    });
     expect(settingRow("default_model")?.value).toBe("gpt-4o");
   });
 
   it("does nothing at all for an empty patch", () => {
     setSettings(db, { baseUrl: "https://api.example.com" });
 
-    expect(setSettings(db, {})).toEqual({ baseUrl: "https://api.example.com", defaultModel: null });
+    expect(setSettings(db, {})).toEqual({
+      baseUrl: "https://api.example.com",
+      defaultModel: null,
+      embeddingModel: null,
+    });
     expect(settingRow("base_url")?.value).toBe("https://api.example.com");
   });
 
@@ -117,7 +126,7 @@ describe("settings storage", () => {
 
     const after = setSettings(db, { baseUrl: null });
 
-    expect(after).toEqual({ baseUrl: null, defaultModel: "gpt-4o" });
+    expect(after).toEqual({ baseUrl: null, defaultModel: "gpt-4o", embeddingModel: null });
     expect(settingRow("base_url")).toBeUndefined();
     expect(settingRow("default_model")?.value).toBe("gpt-4o");
   });
@@ -128,8 +137,29 @@ describe("settings storage", () => {
     expect(setSettings(db, { baseUrl: "   ", defaultModel: "  gpt-4o  " })).toEqual({
       baseUrl: null,
       defaultModel: "gpt-4o",
+      embeddingModel: null,
     });
     expect(settingRow("base_url")).toBeUndefined();
+  });
+
+  /**
+   * D8: the embedding model is the third key. Its own case, because the thing that can go
+   * wrong is different from the other two: retrieval reads it through a default, so "stored
+   * but blank" must not be the same state as "stored and set".
+   */
+  it("round-trips the embedding model, and clears it back to unset", () => {
+    expect(setSettings(db, { embeddingModel: "  text-embedding-3-large  " }).embeddingModel).toBe(
+      "text-embedding-3-large",
+    );
+    expect(settingRow("embedding_model")?.value).toBe("text-embedding-3-large");
+
+    // Null and blank both clear: the resolver's default is what "unset" means, and an
+    // empty row would make `embeddingModel` read as "" to a caller that does not apply it.
+    expect(setSettings(db, { embeddingModel: null }).embeddingModel).toBeNull();
+    expect(settingRow("embedding_model")).toBeUndefined();
+
+    setSettings(db, { embeddingModel: "text-embedding-3-small" });
+    expect(setSettings(db, { embeddingModel: "   " }).embeddingModel).toBeNull();
   });
 });
 

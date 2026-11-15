@@ -105,7 +105,13 @@ describe("missingKeyNote", () => {
 describe("providerForm", () => {
   it("turns an unset base URL into an empty field rather than the word null", () => {
     expect(
-      providerForm({ baseUrl: null, defaultModel: null, hasKey: false, masked: null }),
+      providerForm({
+        baseUrl: null,
+        defaultModel: null,
+        embeddingModel: "text-embedding-3-small",
+        hasKey: false,
+        masked: null,
+      }),
     ).toEqual({
       baseUrl: "",
       hasKey: false,
@@ -118,6 +124,7 @@ describe("providerForm", () => {
       providerForm({
         baseUrl: "https://api.openai.com",
         defaultModel: "gpt-4o-mini",
+        embeddingModel: "text-embedding-3-small",
         hasKey: true,
         masked: "••••4321",
       }),

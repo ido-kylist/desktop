@@ -1,8 +1,16 @@
 import { sql } from "drizzle-orm";
-import { index, integer, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import {
+  blob,
+  index,
+  integer,
+  real,
+  sqliteTable,
+  text,
+  uniqueIndex,
+} from "drizzle-orm/sqlite-core";
 
 /**
- * Schema v5. Local-first: everything lives here, nothing is authoritative in the cloud.
+ * Schema v7. Local-first: everything lives here, nothing is authoritative in the cloud.
  *
  * Branching is native: `messages.parent_id` is a tree, not a list. Regenerating a
  * message creates a sibling under the same parent; forking reparents a subtree.
@@ -100,6 +108,12 @@ export const messages = sqliteTable(
     text: text("text").notNull().default(""),
     model: text("model"),
     variantOf: text("variant_of"),
+    /**
+     * Migration 7. The knowledge chunks this answer was grounded on, as a JSON array of
+     * `{ chunkId, documentId, documentTitle, ordinal }`. Null means the turn used no
+     * knowledge — not "retrieval found nothing", which is also nothing to show.
+     */
+    citationsJson: text("citations_json"),
     createdAt: text("created_at").notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
     deletedAt: text("deleted_at"),
   },
@@ -209,6 +223,91 @@ export const mcpApprovals = sqliteTable(
   ],
 );
 
+/**
+ * Migration 7. One indexed document: the copy main made, and where it came from.
+ *
+ * `sourcePath` is unique so indexing the same file twice is a refusal rather than a second
+ * copy and a second embedding bill. `chunkCount` is written with the chunks, in one
+ * transaction, so a list read is one query instead of one per row.
+ */
+export const documents = sqliteTable(
+  "documents",
+  {
+    id: text("id").primaryKey(),
+    title: text("title").notNull(),
+    sourcePath: text("source_path").notNull(),
+    mime: text("mime").notNull(),
+    bytes: integer("bytes").notNull(),
+    chunkCount: integer("chunk_count").notNull().default(0),
+    createdAt: text("created_at").notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
+  },
+  (t) => [
+    uniqueIndex("documents_source_idx").on(t.sourcePath),
+    index("documents_created_idx").on(t.createdAt),
+  ],
+);
+
+/**
+ * Migration 7. One chunk of a document, with its vector.
+ *
+ * The vector is a BLOB of float32s and `dim` is stored beside it rather than derived from
+ * the byte length: a truncated or empty blob must not read as a legal vector, and a query
+ * embedded by a different model is refused by dimension rather than compared as noise.
+ */
+export const chunks = sqliteTable(
+  "chunks",
+  {
+    id: text("id").primaryKey(),
+    documentId: text("document_id")
+      .notNull()
+      .references(() => documents.id, { onDelete: "cascade" }),
+    ordinal: integer("ordinal").notNull(),
+    text: text("text").notNull(),
+    embedding: blob("embedding", { mode: "buffer" }).notNull(),
+    dim: integer("dim").notNull(),
+    createdAt: text("created_at").notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
+  },
+  (t) => [
+    uniqueIndex("chunks_document_ordinal_idx").on(t.documentId, t.ordinal),
+    index("chunks_dim_idx").on(t.dim),
+  ],
+);
+
+/** Migration 7. A named document a thread owns; `currentVersion` names the newest row below. */
+export const artifacts = sqliteTable(
+  "artifacts",
+  {
+    id: text("id").primaryKey(),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => threads.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    currentVersion: integer("current_version").notNull().default(1),
+    createdAt: text("created_at").notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
+  },
+  (t) => [index("artifacts_thread_idx").on(t.threadId, t.createdAt)],
+);
+
+/**
+ * Migration 7. One immutable revision.
+ *
+ * Nothing updates or deletes a row here. "Edit" is an insert at n+1, which is what makes a
+ * version switcher meaningful and what `UNIQUE (artifact_id, version)` protects.
+ */
+export const artifactVersions = sqliteTable(
+  "artifact_versions",
+  {
+    id: text("id").primaryKey(),
+    artifactId: text("artifact_id")
+      .notNull()
+      .references(() => artifacts.id, { onDelete: "cascade" }),
+    version: integer("version").notNull(),
+    content: text("content").notNull(),
+    createdAt: text("created_at").notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
+  },
+  (t) => [uniqueIndex("artifact_versions_unique_idx").on(t.artifactId, t.version)],
+);
+
 export type Thread = typeof threads.$inferSelect;
 export type Message = typeof messages.$inferSelect;
 export type ContentBlock = typeof contentBlocks.$inferSelect;
@@ -219,3 +318,7 @@ export type Assistant = typeof assistants.$inferSelect;
 export type Prompt = typeof prompts.$inferSelect;
 export type McpServerRecord = typeof mcpServers.$inferSelect;
 export type McpApprovalRecord = typeof mcpApprovals.$inferSelect;
+export type DocumentRecord = typeof documents.$inferSelect;
+export type ChunkRecord = typeof chunks.$inferSelect;
+export type ArtifactRecord = typeof artifacts.$inferSelect;
+export type ArtifactVersionRecord = typeof artifactVersions.$inferSelect;

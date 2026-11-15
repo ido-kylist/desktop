@@ -35,6 +35,11 @@ import { AttachmentChip } from "./AttachmentChip";
  * the library. Picking an assistant takes the model and temperature out of the user's
  * hands, so the model select is replaced by a statement of what will actually be sent
  * rather than left showing a value that is no longer used.
+ *
+ * D8 adds the "Use knowledge" toggle. It is a plain checkbox because it is a per-turn
+ * decision, not a mode: it is read when the turn is sent, it is not remembered across
+ * threads, and it says so by being visible on every composition instead of hiding in
+ * settings.
  */
 
 /** Mirrors `chat.send.attachmentIds.max(10)`: a turn cannot carry more than this. */
@@ -62,13 +67,16 @@ export function Composer({
   onAssistantChange,
   promptToInsert,
   onOpenLibrary,
+  useKnowledge,
+  onUseKnowledgeChange,
+  knowledgeCount,
 }: {
   streaming: boolean;
   disabled: boolean;
   model: string;
   models: ModelCatalog;
   onModelChange: (model: string) => void;
-  onSend: (text: string, attachments: Attachment[]) => void;
+  onSend: (text: string, attachments: Attachment[], useKnowledge: boolean) => void;
   onStop: () => void;
   /** The assistant picker's list and the four states it can be in. */
   assistants: Catalog<AssistantSummary>;
@@ -78,6 +86,11 @@ export function Composer({
   /** Set by the library; appended to whatever is already typed. */
   promptToInsert: PromptInsertion | null;
   onOpenLibrary: () => void;
+  /** D8: whether this turn is grounded on the knowledge base. */
+  useKnowledge: boolean;
+  onUseKnowledgeChange: (useKnowledge: boolean) => void;
+  /** How many documents are indexed, so the toggle can say what it would search. */
+  knowledgeCount: number | null;
 }): React.JSX.Element {
   const [value, setValue] = useState("");
   const [pending, setPending] = useState<Attachment[]>([]);
@@ -185,7 +198,7 @@ export function Composer({
     setValue("");
     setPending([]);
     setProblem(null);
-    onSend(text, attachments);
+    onSend(text, attachments, useKnowledge);
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
@@ -313,6 +326,29 @@ export function Composer({
               </option>
             ))}
           </select>
+        </label>
+        {/*
+          D8: the per-turn knowledge switch. It is not disabled while a turn streams, for the
+          same reason the model select is not: it describes what the *next* turn will send, and
+          the turn in flight was sent with whatever it said at that moment. The value travels
+          on `chat.send`, so nothing here is read by main after the fact.
+        */}
+        <label className="model-picker knowledge-toggle">
+          <input
+            type="checkbox"
+            checked={useKnowledge}
+            disabled={disabled}
+            onChange={(event) => onUseKnowledgeChange(event.target.checked)}
+            data-testid="use-knowledge"
+          />
+          <span>Use knowledge</span>
+          {useKnowledge && knowledgeCount !== null && (
+            <output className="composer-note muted" data-testid="knowledge-count">
+              {knowledgeCount === 0
+                ? "0 documents indexed"
+                : `${knowledgeCount} ${knowledgeCount === 1 ? "document" : "documents"}`}
+            </output>
+          )}
         </label>
         {assistantNote !== null && (
           <output

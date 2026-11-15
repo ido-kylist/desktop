@@ -1,9 +1,11 @@
 import type { Attachment, IpcError } from "@shared/ipc-contract";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { ArtifactsPanel } from "./components/ArtifactsPanel";
 import { Composer, type PromptInsertion } from "./components/Composer";
 import { Diagnostics } from "./components/Diagnostics";
 import { ErrorBanner } from "./components/ErrorBanner";
+import { KnowledgePanel } from "./components/KnowledgePanel";
 import { McpPanel } from "./components/McpPanel";
 import { MessageList } from "./components/MessageList";
 import { PromptLibrary } from "./components/PromptLibrary";
@@ -12,6 +14,7 @@ import { Sidebar } from "./components/Sidebar";
 import { UsageTotal } from "./components/UsageMeter";
 import { useAssistants } from "./hooks/use-assistants";
 import { useAutoScroll } from "./hooks/use-auto-scroll";
+import { useKnowledgeDocuments } from "./hooks/use-knowledge";
 import { useModelCatalog } from "./hooks/use-model-catalog";
 import { PROJECT_LIST_KEY } from "./hooks/use-projects";
 import { useSettings } from "./hooks/use-settings";
@@ -101,10 +104,19 @@ export function App(): React.JSX.Element {
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [promptInsert, setPromptInsert] = useState<PromptInsertion | null>(null);
   const [mcpOpen, setMcpOpen] = useState(false);
+  const [knowledgeOpen, setKnowledgeOpen] = useState(false);
+  const [artifactsOpen, setArtifactsOpen] = useState(false);
+  /**
+   * D8: whether the next turn is grounded on the knowledge base. Deliberately renderer state
+   * rather than a stored setting: it is a decision about this message, and a value that
+   * survived a relaunch would silently keep searching a corpus the user forgot about.
+   */
+  const [useKnowledge, setUseKnowledge] = useState(false);
 
   const settings = useSettings();
   const { catalog } = useModelCatalog();
   const assistants = useAssistants();
+  const knowledgeDocuments = useKnowledgeDocuments();
   const assistantCatalog = buildCatalog({
     loading: assistants.isPending,
     result: assistants.data?.items,
@@ -169,7 +181,7 @@ export function App(): React.JSX.Element {
   }, [threadId, loadedThreadId, loadedAssistantId]);
 
   const send = useCallback(
-    async (text: string, attachments: readonly Attachment[] = []) => {
+    async (text: string, attachments: readonly Attachment[] = [], grounded = false) => {
       // Ids come back from main, not from the renderer: main persists the turn and
       // returns its row ids, and the store adopts exactly those.
       //
@@ -193,6 +205,9 @@ export function App(): React.JSX.Element {
         ...(attachments.length === 0
           ? {}
           : { attachmentIds: attachments.map((attachment) => attachment.id) }),
+        // D8: sent explicitly rather than only when true, so a turn that has it off says so
+        // on the wire instead of relying on main's default staying the same forever.
+        useKnowledge: grounded,
       });
       if (!result.ok) {
         setLastError(result.error);
@@ -206,6 +221,9 @@ export function App(): React.JSX.Element {
         text,
         createdAt: new Date().toISOString(),
         ...(attachments.length === 0 ? {} : { attachments: [...attachments] }),
+        // The chips are drawn from the response, so they are on screen while the answer
+        // streams rather than after a reload.
+        ...(result.data.citations === undefined ? {} : { citations: result.data.citations }),
       });
       // A new thread has to appear in the sidebar while its answer is still arriving,
       // and a project's thread count moves with it.
@@ -304,6 +322,26 @@ export function App(): React.JSX.Element {
         <button
           type="button"
           className="btn btn-small"
+          aria-label="Knowledge base"
+          title="Knowledge base"
+          data-testid="open-knowledge"
+          onClick={() => setKnowledgeOpen((open) => !open)}
+        >
+          Knowledge
+        </button>
+        <button
+          type="button"
+          className="btn btn-small"
+          aria-label="Artifacts"
+          title="Artifacts"
+          data-testid="open-artifacts"
+          onClick={() => setArtifactsOpen((open) => !open)}
+        >
+          Artifacts
+        </button>
+        <button
+          type="button"
+          className="btn btn-small"
           aria-label="Settings"
           title="Settings"
           data-testid="open-settings"
@@ -347,7 +385,7 @@ export function App(): React.JSX.Element {
                 <ErrorBanner
                   error={turnError}
                   retryText={retryText}
-                  onRetry={(text) => void send(text)}
+                  onRetry={(text) => void send(text, [], useKnowledge)}
                 />
               )}
             </div>
@@ -358,13 +396,16 @@ export function App(): React.JSX.Element {
               model={model}
               models={catalog}
               onModelChange={setChosenModel}
-              onSend={(text, attachments) => void send(text, attachments)}
+              onSend={(text, attachments, grounded) => void send(text, attachments, grounded)}
               onStop={() => void stop()}
               assistants={assistantCatalog}
               assistantId={assistantId}
               onAssistantChange={setAssistantId}
               promptToInsert={promptInsert}
               onOpenLibrary={() => setLibraryOpen(true)}
+              useKnowledge={useKnowledge}
+              onUseKnowledgeChange={setUseKnowledge}
+              knowledgeCount={knowledgeDocuments.data?.total ?? null}
             />
           </main>
         </div>
@@ -382,6 +423,22 @@ export function App(): React.JSX.Element {
       )}
 
       {mcpOpen && <McpPanel onClose={() => setMcpOpen(false)} />}
+
+      {knowledgeOpen && <KnowledgePanel onClose={() => setKnowledgeOpen(false)} />}
+
+      {artifactsOpen && (
+        /**
+         * Keyed by thread: an artifact belongs to the conversation it was created in, so
+         * switching threads must drop the selection and the draft rather than carry them into
+         * a conversation they have nothing to do with. A remount is the simplest way to make
+         * that true of every piece of the panel's state at once.
+         */
+        <ArtifactsPanel
+          key={threadId ?? "no-thread"}
+          threadId={threadId}
+          onClose={() => setArtifactsOpen(false)}
+        />
+      )}
 
       <Diagnostics />
     </div>

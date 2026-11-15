@@ -244,4 +244,85 @@ CREATE INDEX IF NOT EXISTS mcp_approvals_server_idx ON mcp_approvals (server_id,
 CREATE INDEX IF NOT EXISTS mcp_approvals_status_idx ON mcp_approvals (status);
 `.trim(),
   },
+  {
+    /**
+     * D8: the knowledge base and versioned artifacts.
+     *
+     * `chunks.embedding` is a BLOB of little-endian float32s, and `dim` is stored beside it
+     * rather than derived from the blob's length. Two reasons: a zero-length blob must not
+     * read as a zero-dimension vector, and a chunk indexed by one embedding model must be
+     * recognisable as incomparable with a query embedded by another. Search filters on
+     * `dim` and says so when nothing matches, instead of silently returning nothing.
+     *
+     * `chunks.document_id` cascades: a chunk without its document is unreachable, and
+     * deleting a document that left its vectors behind would leak both disk and results.
+     * `UNIQUE (document_id, ordinal)` is the chunking contract made durable — one ordinal
+     * appears once, so a re-index of a document cannot half-overwrite it.
+     *
+     * `documents.source_path` has a unique index: the same file indexed twice is the same
+     * text and a second bill from the embedding provider. `kb.addDocument` reports the
+     * existing document as CONFLICT rather than writing the duplicate.
+     *
+     * `artifacts.thread_id` cascades off `threads`. Threads are soft-deleted in this app, so
+     * the cascade only fires if a thread row is ever really removed — but an artifact whose
+     * owner is gone has nowhere to be shown.
+     *
+     * `artifact_versions` is append-only by construction: nothing in the codebase updates or
+     * deletes a version row, and `UNIQUE (artifact_id, version)` plus the conditional bump of
+     * `artifacts.current_version` are what keep the sequence contiguous under a retry.
+     *
+     * `messages.citations_json` is the citation list, written once when the assistant row is
+     * created. It is JSON text rather than a join table because it is a value of the message,
+     * read whole with it and never queried into — the same trade `mcp_servers.args_json` makes.
+     */
+    version: 7,
+    name: "knowledge-artifacts",
+    sql: `
+CREATE TABLE IF NOT EXISTS documents (
+  id          TEXT PRIMARY KEY,
+  title       TEXT NOT NULL,
+  source_path TEXT NOT NULL,
+  mime        TEXT NOT NULL,
+  bytes       INTEGER NOT NULL,
+  chunk_count INTEGER NOT NULL DEFAULT 0,
+  created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS documents_source_idx ON documents (source_path);
+CREATE INDEX IF NOT EXISTS documents_created_idx ON documents (created_at DESC);
+
+CREATE TABLE IF NOT EXISTS chunks (
+  id          TEXT PRIMARY KEY,
+  document_id TEXT NOT NULL REFERENCES documents (id) ON DELETE CASCADE,
+  ordinal     INTEGER NOT NULL,
+  text        TEXT NOT NULL,
+  embedding   BLOB NOT NULL,
+  dim         INTEGER NOT NULL,
+  created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  UNIQUE (document_id, ordinal)
+);
+CREATE INDEX IF NOT EXISTS chunks_document_idx ON chunks (document_id, ordinal);
+CREATE INDEX IF NOT EXISTS chunks_dim_idx ON chunks (dim);
+
+CREATE TABLE IF NOT EXISTS artifacts (
+  id              TEXT PRIMARY KEY,
+  thread_id       TEXT NOT NULL REFERENCES threads (id) ON DELETE CASCADE,
+  title           TEXT NOT NULL,
+  current_version INTEGER NOT NULL DEFAULT 1,
+  created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS artifacts_thread_idx ON artifacts (thread_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS artifact_versions (
+  id          TEXT PRIMARY KEY,
+  artifact_id TEXT NOT NULL REFERENCES artifacts (id) ON DELETE CASCADE,
+  version     INTEGER NOT NULL,
+  content     TEXT NOT NULL,
+  created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  UNIQUE (artifact_id, version)
+);
+CREATE INDEX IF NOT EXISTS artifact_versions_artifact_idx ON artifact_versions (artifact_id, version);
+
+ALTER TABLE messages ADD COLUMN citations_json TEXT;
+`.trim(),
+  },
 ];

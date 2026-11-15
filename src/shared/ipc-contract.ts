@@ -162,6 +162,88 @@ export type McpServer = z.infer<typeof McpServerSchema>;
 export const McpApprovalStatusSchema = z.enum(["pending", "executed", "denied", "failed"]);
 export type McpApprovalStatus = z.infer<typeof McpApprovalStatusSchema>;
 
+/* -------------------------------------------------- D8: knowledge + artifacts */
+
+/**
+ * One indexed document.
+ *
+ * `sourcePath` is where the file came from, kept so the panel can say *which* of several
+ * `notes.md` a row is. It is not a path the renderer may read: the bytes live in a copy
+ * under the app's own data directory, and this field is only a label.
+ *
+ * `chunkCount` is stored, not counted per row on every read. It is written in the same
+ * transaction as the chunks, so it cannot drift from them, and a list of a hundred
+ * documents does not cost a hundred `COUNT(*)` subqueries.
+ */
+export const KnowledgeDocumentSchema = z.object({
+  id: z.uuid(),
+  title: z.string(),
+  sourcePath: z.string(),
+  mime: z.string(),
+  bytes: z.number().int().nonnegative(),
+  chunkCount: z.number().int().nonnegative(),
+  createdAt: z.iso.datetime(),
+});
+export type KnowledgeDocument = z.infer<typeof KnowledgeDocumentSchema>;
+
+/**
+ * A retrieved chunk, as the answer cites it.
+ *
+ * Deliberately four fields and no text: this list is persisted on the assistant message
+ * and replayed on every `chat.thread`, so it is capped at k=5 rows of metadata rather than
+ * four kilobytes of document text per turn. The text is read on demand through
+ * `kb.readChunk` when a citation is expanded — see `docs/DECISIONS.md`.
+ */
+export const CitationSchema = z.object({
+  chunkId: z.uuid(),
+  documentId: z.uuid(),
+  documentTitle: z.string(),
+  ordinal: z.number().int().nonnegative(),
+});
+export type Citation = z.infer<typeof CitationSchema>;
+
+/**
+ * One search result: a citation plus the text it points at and how close it was.
+ *
+ * `score` is a cosine in [-1, 1]. It is shown rather than hidden because a preview whose
+ * ranking cannot be inspected is a preview nobody can debug.
+ */
+export const KnowledgeHitSchema = CitationSchema.extend({
+  text: z.string(),
+  score: z.number().min(-1).max(1),
+});
+export type KnowledgeHit = z.infer<typeof KnowledgeHitSchema>;
+
+/** A chunk by id, for expanding a citation after a relaunch. */
+export const KnowledgeChunkSchema = CitationSchema.extend({ text: z.string() });
+export type KnowledgeChunk = z.infer<typeof KnowledgeChunkSchema>;
+
+/**
+ * A versioned artifact: a named document a thread owns.
+ *
+ * `currentVersion` is the newest version *number*; the rows themselves are immutable, so
+ * "edit" always means "write version n+1". There is no updated-at: the newest version's
+ * timestamp is that fact, and a second column could disagree with it.
+ */
+export const ArtifactSchema = z.object({
+  id: z.uuid(),
+  threadId: z.uuid(),
+  title: z.string(),
+  currentVersion: z.number().int().positive(),
+  createdAt: z.iso.datetime(),
+});
+export type Artifact = z.infer<typeof ArtifactSchema>;
+
+/** One immutable revision. `UNIQUE(artifact_id, version)` is the database's promise. */
+export const ArtifactVersionSchema = z.object({
+  id: z.uuid(),
+  artifactId: z.uuid(),
+  version: z.number().int().positive(),
+  content: z.string(),
+  createdAt: z.iso.datetime(),
+});
+export type ArtifactVersion = z.infer<typeof ArtifactVersionSchema>;
+
 /* ---------------------------------------------------------------- channels */
 
 type Contract = { request: z.ZodTypeAny; response: z.ZodTypeAny };
@@ -234,12 +316,30 @@ export const contracts = {
       projectId: z.uuid().nullable().optional(),
       /** D4: ids returned by `attachments.add`, already stored and capped. */
       attachmentIds: z.array(z.uuid()).max(10).optional(),
+      /**
+       * D8: retrieve from the knowledge base before answering. When false or absent the
+       * turn is unchanged, so a thread that never used knowledge is not affected by the
+       * setting being on somewhere else.
+       */
+      useKnowledge: z.boolean().optional(),
+      /**
+       * D8: narrow retrieval to these documents. Absent means "every indexed document";
+       * an empty array is not accepted, because "no documents" is the same thing as
+       * `useKnowledge: false` and two spells for one intent is one too many.
+       */
+      documentIds: z.array(z.uuid()).min(1).max(50).optional(),
     }),
     response: z.object({
       threadId: z.uuid(),
       userMessageId: z.uuid(),
       assistantMessageId: z.uuid(),
       generationId: z.uuid(),
+      /**
+       * D8: what the turn was grounded on, in marker order. Present only when retrieval
+       * ran and found something. It travels with the response so the chips appear on the
+       * live turn instead of waiting for a reload of the thread.
+       */
+      citations: z.array(CitationSchema).optional(),
     }),
   },
   "chat.stop": {
@@ -295,6 +395,12 @@ export const contracts = {
             .optional(),
           /** D4: files attached to this message, metadata only. */
           attachments: z.array(AttachmentSchema).optional(),
+          /**
+           * D8: the chunks this answer was grounded on, in marker order. Absent on a
+           * message that used no knowledge — which is different from an empty list that
+           * retrieval ran and produced, and the UI renders nothing for both.
+           */
+          citations: z.array(CitationSchema).optional(),
         }),
       ),
       /** The message whose ancestor path is active; null means "follow the newest leaf". */
@@ -373,6 +479,11 @@ export const contracts = {
       /** Null means "not configured"; the resolver falls back to env, then mock, then a clear error. */
       baseUrl: z.string().nullable(),
       defaultModel: z.string().nullable(),
+      /**
+       * D8: the model retrieval embeds with. Never null: the stored value or the default,
+       * because a blank embedding model is not a configuration, it is a broken search.
+       */
+      embeddingModel: z.string(),
       hasKey: z.boolean(),
       /** Last four only. The key itself never appears in any response. */
       masked: z.string().nullable(),
@@ -383,10 +494,13 @@ export const contracts = {
     request: z.object({
       baseUrl: z.string().max(500).nullable().optional(),
       defaultModel: z.string().max(200).nullable().optional(),
+      /** Cleared (null) falls back to the default; the response reports the effective one. */
+      embeddingModel: z.string().max(200).nullable().optional(),
     }),
     response: z.object({
       baseUrl: z.string().nullable(),
       defaultModel: z.string().nullable(),
+      embeddingModel: z.string(),
       hasKey: z.boolean(),
       masked: z.string().nullable(),
     }),
@@ -632,6 +746,107 @@ export const contracts = {
       /** Why a `failed` call failed. Present only when failed. */
       error: z.string().optional(),
     }),
+  },
+
+  /* ------------------------------------------------------------- D8: knowledge */
+
+  /**
+   * Indexes files: copy, chunk, embed, and record — in that order, and only the last step
+   * is transactional.
+   *
+   * The caps and the extension table are the attachment module's, not a second copy of
+   * them: a file this app will not attach is a file it will not index, and two lists that
+   * disagree about `.md` would be a defect with no author.
+   */
+  "kb.addDocument": {
+    request: z.object({
+      /** Absolute paths, as picked. Main owns the file system; the renderer never does. */
+      paths: z.array(z.string().min(1)).min(1).max(10),
+    }),
+    response: z.object({ documents: z.array(KnowledgeDocumentSchema) }),
+  },
+
+  "kb.listDocuments": {
+    request: z.object({}),
+    response: z.object({
+      items: z.array(KnowledgeDocumentSchema),
+      total: z.number().int().nonnegative(),
+    }),
+  },
+
+  /** Removes the row, its chunks (by cascade) and the stored copy. */
+  "kb.deleteDocument": {
+    request: z.object({ documentId: z.uuid() }),
+    response: z.object({ ok: z.literal(true) }),
+  },
+
+  /**
+   * Retrieval on its own, for the panel's preview. The answer path does not go through
+   * this channel: `chat.send` retrieves inside main, because the citation list has to be
+   * persisted with the message and a round trip through the renderer would let the two
+   * disagree about what the answer was given.
+   */
+  "kb.search": {
+    request: z.object({
+      query: z.string().trim().min(1).max(2000),
+      limit: z.number().int().min(1).max(50),
+    }),
+    response: z.object({ chunks: z.array(KnowledgeHitSchema) }),
+  },
+
+  /**
+   * One chunk's text, for expanding a citation. Separate from `kb.search` because a
+   * citation is a pointer: it is stored on the message, replayed on relaunch, and expanded
+   * by the user later, when re-running the query would be a different query.
+   */
+  "kb.readChunk": {
+    request: z.object({ chunkId: z.uuid() }),
+    response: z.object({ chunk: KnowledgeChunkSchema }),
+  },
+
+  /* ------------------------------------------------------------- D8: artifacts */
+
+  /** A thread's artifacts, newest first. No versions: the row says which one is current. */
+  "artifacts.list": {
+    request: z.object({ threadId: z.uuid() }),
+    response: z.object({
+      items: z.array(ArtifactSchema),
+      total: z.number().int().nonnegative(),
+    }),
+  },
+
+  /**
+   * One artifact and every version it has ever had, oldest first.
+   *
+   * `latest` is the version `artifact.currentVersion` names, repeated rather than left for
+   * the caller to pick out of the list: every screen that opens this read wants that one,
+   * and a client that had to search for it could disagree with the row about which is newest.
+   */
+  "artifacts.get": {
+    request: z.object({ artifactId: z.uuid() }),
+    response: z.object({
+      artifact: ArtifactSchema,
+      versions: z.array(ArtifactVersionSchema),
+      latest: ArtifactVersionSchema,
+    }),
+  },
+
+  /**
+   * Writes a version. `artifactId: null` creates the artifact at version 1; an id writes
+   * version n+1 and returns it. An edit is never a mutation of an old row — that is what
+   * makes "go back to v2" possible and what the `UNIQUE(artifact_id, version)` enforces.
+   *
+   * `threadId` is required either way: an artifact belongs to a conversation, and creating
+   * one with no thread to show it in would be a row nobody can reach.
+   */
+  "artifacts.save": {
+    request: z.object({
+      artifactId: z.uuid().nullable(),
+      threadId: z.uuid(),
+      title: z.string().trim().min(1).max(200),
+      content: z.string().max(200_000),
+    }),
+    response: z.object({ artifact: ArtifactSchema, version: ArtifactVersionSchema }),
   },
 } as const satisfies Record<ChannelName, Contract>;
 

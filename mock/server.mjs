@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 /**
  * Mock inference server — zero dependencies.
@@ -18,6 +19,10 @@ import { readFile } from "node:fs/promises";
  *   mock/truncated  → stream dies mid-sentence, no finish_reason, no [DONE]
  *   mock/402        → 402 payment required, JSON body
  *   mock/429        → 429 rate limited, JSON body with Retry-After
+ *
+ * `POST /v1/embeddings` (D8) answers with deterministic pseudo-vectors, so a knowledge
+ * test needs no key and gets the same numbers on every run. See `embed` below for why
+ * they are bag-of-token hashes rather than a hash of the whole string.
  */
 import { createServer } from "node:http";
 import { dirname, join } from "node:path";
@@ -52,6 +57,75 @@ function sendJson(res, code, body, headers = {}) {
     ...headers,
   });
   res.end(JSON.stringify(body));
+}
+
+/* --------------------------------------------------------- D8: embeddings */
+
+/** The vector width the mock reports. Small enough to read, wide enough to separate. */
+const EMBEDDING_DIM = 64;
+
+/**
+ * A deterministic pseudo-embedding: a bag of hashed tokens, L2-normalised.
+ *
+ * Not a hash of the whole string, and that is the point. A per-string hash gives every text
+ * an unrelated vector, so an exact-phrase query would score *randomly* against the chunks
+ * that contain it — the integration test would assert a coin flip. Hashing each token into
+ * a dimension means two texts that share words share direction, which is what retrieval
+ * is supposed to reward; the mock then behaves like a very bad but honest embedding model
+ * instead of noise.
+ *
+ * Deterministic for two reasons: a test that searches twice gets the same ranking, and a
+ * corpus ingested once can be searched by a process that restarted.
+ */
+function embed(text) {
+  const vector = new Float64Array(EMBEDDING_DIM);
+  const tokens = String(text)
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((token) => token !== "");
+
+  for (const token of tokens) {
+    const digest = createHash("sha256").update(token).digest();
+    const dim = digest.readUInt32BE(0) % EMBEDDING_DIM;
+    // A sign per token, so two tokens that collide in a dimension can cancel rather than
+    // always reinforcing each other. Derived from the digest, so it is stable too.
+    const sign = (digest[4] & 1) === 0 ? 1 : -1;
+    vector[dim] += sign;
+  }
+
+  let norm = 0;
+  for (const value of vector) norm += value * value;
+  if (norm === 0) return Array.from(vector);
+
+  const length = Math.sqrt(norm);
+  return Array.from(vector, (value) => value / length);
+}
+
+/** `{ model, input }` → one vector per input, in input order, with `index` set. */
+function handleEmbeddings(res, body) {
+  const input = body.input;
+  const texts = typeof input === "string" ? [input] : Array.isArray(input) ? input : null;
+  if (texts === null || texts.length === 0 || texts.some((text) => typeof text !== "string")) {
+    return sendJson(res, 400, {
+      error: { code: "BAD_REQUEST", message: "input must be a string or an array of strings" },
+    });
+  }
+
+  const model = typeof body.model === "string" && body.model !== "" ? body.model : "mock/embed";
+
+  return sendJson(res, 200, {
+    object: "list",
+    model,
+    data: texts.map((text, index) => ({
+      object: "embedding",
+      index,
+      embedding: embed(text),
+    })),
+    usage: {
+      prompt_tokens: texts.reduce((total, text) => total + text.split(/\s+/).length, 0),
+      total_tokens: texts.reduce((total, text) => total + text.split(/\s+/).length, 0),
+    },
+  });
 }
 
 async function readBody(req, limit = 256 * 1024) {
@@ -91,6 +165,16 @@ const server = createServer(async (req, res) => {
 
   if (req.method === "GET" && url.pathname === "/v1/models") {
     return sendJson(res, 200, { object: "list", data: MODELS });
+  }
+
+  if (req.method === "POST" && url.pathname === "/v1/embeddings") {
+    let body;
+    try {
+      body = JSON.parse(await readBody(req));
+    } catch {
+      return sendJson(res, 400, { error: { code: "BAD_REQUEST", message: "invalid JSON body" } });
+    }
+    return handleEmbeddings(res, body);
   }
 
   if (req.method === "POST" && url.pathname === "/v1/chat/completions") {

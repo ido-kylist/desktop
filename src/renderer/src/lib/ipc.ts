@@ -313,3 +313,64 @@ export function resolveMcpApproval(
 ): Promise<IpcResult<ResponseOf<"mcp.resolveApproval">>> {
   return invokeSettled("mcp.resolveApproval", request);
 }
+
+/* ------------------------------------------------------ D8: knowledge */
+
+/**
+ * The document list drives a panel with its own states, so it throws and TanStack Query owns
+ * the error: a failed read has to render as a failure, not as "no documents".
+ */
+export function listKnowledgeDocuments(): Promise<ResponseOf<"kb.listDocuments">> {
+  return callOrThrow("kb.listDocuments", {});
+}
+
+/**
+ * Copies and indexes the files at these paths. Settled: the panel shows the refusal (a PDF,
+ * a duplicate, a file too large) next to the button that caused it.
+ */
+export function addKnowledgeDocuments(
+  paths: readonly string[],
+): Promise<IpcResult<ResponseOf<"kb.addDocument">>> {
+  return invokeSettled("kb.addDocument", { paths: [...paths] });
+}
+
+export function deleteKnowledgeDocument(
+  documentId: string,
+): Promise<IpcResult<ResponseOf<"kb.deleteDocument">>> {
+  return invokeSettled("kb.deleteDocument", { documentId });
+}
+
+/** The preview's search. Settled: an empty result and a failed search look different. */
+export function searchKnowledge(
+  request: RequestOf<"kb.search">,
+): Promise<IpcResult<ResponseOf<"kb.search">>> {
+  return invokeSettled("kb.search", request);
+}
+
+/**
+ * One chunk's text, for expanding a citation. Settled because the chip is already on screen:
+ * a chunk that has since been deleted must collapse the chip into a message, not take the
+ * transcript down with it.
+ */
+export function readKnowledgeChunk(
+  chunkId: string,
+): Promise<IpcResult<ResponseOf<"kb.readChunk">>> {
+  return invokeSettled("kb.readChunk", { chunkId });
+}
+
+/* ------------------------------------------------------ D8: artifacts */
+
+export function listArtifacts(threadId: string): Promise<ResponseOf<"artifacts.list">> {
+  return callOrThrow("artifacts.list", { threadId });
+}
+
+export function getArtifact(artifactId: string): Promise<ResponseOf<"artifacts.get">> {
+  return callOrThrow("artifacts.get", { artifactId });
+}
+
+/** A new version. Settled: the panel keeps the draft on screen when main refuses it. */
+export function saveArtifact(
+  request: RequestOf<"artifacts.save">,
+): Promise<IpcResult<ResponseOf<"artifacts.save">>> {
+  return invokeSettled("artifacts.save", request);
+}

@@ -233,7 +233,13 @@ async function readErrorBody(response: Response): Promise<ErrorBody> {
   return { message: preview(text) };
 }
 
-async function httpError(response: Response): Promise<AppError> {
+/**
+ * Maps a failed HTTP response onto the error taxonomy, and is exported because the
+ * embeddings request is the second caller: 402, 429 and "anything else" must mean the same
+ * thing on both, and two copies of this mapping would eventually disagree about which
+ * status is a budget problem.
+ */
+export async function httpError(response: Response): Promise<AppError> {
   const body = await readErrorBody(response);
   const message = body.message ?? `inference request failed with status ${response.status}`;
   const details = { status: response.status };
