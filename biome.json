@@ -10,7 +10,8 @@
       "!drizzle",
       "!pnpm-lock.yaml",
       "!test-results",
-      "!playwright-report"
+      "!playwright-report",
+      "!scripts/perf/.build"
     ]
   },
   "formatter": {

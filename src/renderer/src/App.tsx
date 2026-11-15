@@ -41,6 +41,35 @@ type View = "chat" | "settings";
 const NO_OPTIONS: readonly ModelOption[] = [];
 
 /**
+ * Puts keyboard focus back on a variant switcher after the thread is re-read.
+ *
+ * The re-read is the point of a variant switch and of a regenerate, and it replaces the
+ * message row: the button the user just pressed is unmounted, and focus falls to
+ * `document.body`. A keyboard user then has to tab in from the top of the window to get
+ * back to where they were, which is the classic "my place is gone" bug. Restoring to the
+ * newest enabled arrow keeps the switcher usable for a second press.
+ *
+ * Guarded on focus having actually been lost — inside the transcript (the vanished
+ * control's neighbourhood) or on the body. A user who moved to the composer while the
+ * answer streamed must not have the caret pulled out of it.
+ */
+function focusVariantControl(): void {
+  const active = document.activeElement;
+  const lost =
+    active === null ||
+    active === document.body ||
+    (active instanceof Element && active.closest(".transcript") !== null);
+  if (!lost) return;
+
+  const controls = Array.from(
+    document.querySelectorAll<HTMLButtonElement>(
+      '[data-testid="variant-next"], [data-testid="variant-prev"]',
+    ),
+  ).filter((node) => !node.disabled);
+  controls.at(-1)?.focus();
+}
+
+/**
  * The text a retry would resend: the user turn that produced the last failed answer.
  * Null when the last turn did not fail, which is what keeps a stale banner from
  * outliving its problem.
@@ -149,7 +178,9 @@ export function App(): React.JSX.Element {
       void queryClient.invalidateQueries({ queryKey: THREAD_LIST_KEY });
       if (refreshAfterStream.current) {
         refreshAfterStream.current = false;
-        void reloadThread();
+        // Focus comes back after the re-read has actually painted: the row that held it
+        // is replaced by the new variant, so there is nothing to focus before that.
+        void reloadThread().then(() => requestAnimationFrame(focusVariantControl));
       }
     }
     wasStreaming.current = streamingNow;
@@ -262,6 +293,9 @@ export function App(): React.JSX.Element {
           return;
         }
         await reloadThread();
+        // The message that was on screen is replaced by its sibling, so the arrow that
+        // was pressed no longer exists. Put focus back on the switcher that does.
+        requestAnimationFrame(focusVariantControl);
       } finally {
         setSwitching(false);
       }
@@ -301,6 +335,26 @@ export function App(): React.JSX.Element {
   const preloadMissing = bridge() === undefined;
   const totals = sumUsage(messages);
   const busy = switching || streaming !== null;
+  /**
+   * The answer a live generation is writing into, so exactly one message body is a polite
+   * live region. Derived rather than "the last message": a variant switch can leave an
+   * older answer selected while a regenerate streams into a new one.
+   */
+  const streamingMessageId =
+    streaming === null
+      ? null
+      : (messages.find(
+          (message) =>
+            message.role === "assistant" && message.generationId === streaming.generationId,
+        )?.id ?? null);
+  /**
+   * A thread that loaded and has nothing to show. Not "no thread selected" (the empty
+   * transcript with its "New thread" invitation) and not a failure — a thread whose every
+   * message was soft-deleted, or one written by a build that did not persist its turns.
+   * Without this the transcript was simply blank, which reads as a broken app.
+   */
+  const emptyThread =
+    threadId !== null && messages.length === 0 && !history.loading && history.error === null;
 
   return (
     <div className="app">
@@ -369,17 +423,32 @@ export function App(): React.JSX.Element {
           />
 
           <main className="chat">
-            <div className="transcript" ref={scroll.ref} onScroll={scroll.onScroll}>
+            <section
+              className="transcript"
+              ref={scroll.ref}
+              onScroll={scroll.onScroll}
+              aria-label="Conversation"
+            >
               {(messages.length > 0 || threadId === null) && (
                 <MessageList
                   messages={messages}
                   groups={history.groups}
                   busy={busy}
+                  streamingMessageId={streamingMessageId}
                   onSwitchVariant={(messageId) => void switchVariant(messageId)}
                   onRegenerate={(messageId) => void regenerate(messageId)}
                 />
               )}
-              {history.loading && <p className="muted">Restoring…</p>}
+              {history.loading && <output className="muted">Restoring…</output>}
+              {emptyThread && (
+                <div className="empty" data-testid="thread-empty">
+                  <h2>No messages</h2>
+                  <p className="muted">
+                    This thread is empty — every turn in it has been deleted. Send a message to
+                    start it again.
+                  </p>
+                </div>
+              )}
               {restoreBanner(history.error)}
               {turnError !== null && (
                 <ErrorBanner
@@ -388,7 +457,7 @@ export function App(): React.JSX.Element {
                   onRetry={(text) => void send(text, [], useKnowledge)}
                 />
               )}
-            </div>
+            </section>
 
             <Composer
               streaming={streaming !== null}

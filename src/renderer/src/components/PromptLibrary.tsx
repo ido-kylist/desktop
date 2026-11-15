@@ -1,7 +1,8 @@
 import type { IpcError } from "@shared/ipc-contract";
 import { useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useDebouncedValue } from "../hooks/use-debounced-value";
+import { useDialogFocus } from "../hooks/use-dialog-focus";
 import { useModelCatalog } from "../hooks/use-model-catalog";
 import { usePrompts } from "../hooks/use-prompts";
 import { buildCatalog, type Catalog } from "../lib/catalogs";
@@ -34,11 +35,20 @@ export function PromptLibrary({
   onInsert: (text: string) => void;
 }): React.JSX.Element {
   const [tab, setTab] = useState<Tab>("prompts");
+  const panel = useRef<HTMLElement | null>(null);
+  useDialogFocus(panel, onClose);
 
   return (
     <div className="library-backdrop" data-testid="prompt-library">
-      <section className="library" role="dialog" aria-modal="true" aria-label="Prompt library">
-        <header className="library-head">
+      <section
+        className="library"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Prompt library"
+        ref={panel}
+        tabIndex={-1}
+      >
+        <div className="library-head">
           <h2>Library</h2>
           <div className="library-tabs" role="tablist" aria-label="Library sections">
             <button
@@ -71,7 +81,7 @@ export function PromptLibrary({
           >
             ✕
           </button>
-        </header>
+        </div>
 
         {tab === "prompts" ? <PromptsTab onInsert={onInsert} /> : <AssistantsTab />}
       </section>

@@ -1,6 +1,7 @@
 import type { IpcError, McpTool } from "@shared/ipc-contract";
 import { useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { useDialogFocus } from "../hooks/use-dialog-focus";
 import { MCP_SERVER_LIST_KEY, type McpServerSummary, useMcpServers } from "../hooks/use-mcp";
 import { buildCatalog, type Catalog } from "../lib/catalogs";
 import {
@@ -63,6 +64,8 @@ export function McpPanel({ onClose }: { onClose: () => void }): React.JSX.Elemen
   const [error, setError] = useState<IpcError | null>(null);
   const [pending, setPending] = useState<McpApprovalRequest | null>(null);
   const [records, setRecords] = useState<ApprovalRecord[]>([]);
+  const panel = useRef<HTMLElement | null>(null);
+  useDialogFocus(panel, onClose);
 
   const refresh = async (): Promise<void> => {
     await queryClient.invalidateQueries({ queryKey: MCP_SERVER_LIST_KEY });
@@ -216,8 +219,15 @@ export function McpPanel({ onClose }: { onClose: () => void }): React.JSX.Elemen
 
   return (
     <div className="library-backdrop" data-testid="mcp-panel">
-      <section className="library mcp" role="dialog" aria-modal="true" aria-label="MCP servers">
-        <header className="library-head">
+      <section
+        className="library mcp"
+        role="dialog"
+        aria-modal="true"
+        aria-label="MCP servers"
+        ref={panel}
+        tabIndex={-1}
+      >
+        <div className="library-head">
           <h2>MCP</h2>
           <span className="mcp-kicker">tools run only when you allow them</span>
           <button
@@ -241,7 +251,7 @@ export function McpPanel({ onClose }: { onClose: () => void }): React.JSX.Elemen
           >
             ✕
           </button>
-        </header>
+        </div>
 
         {pending !== null && (
           <McpApprovalCard

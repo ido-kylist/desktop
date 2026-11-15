@@ -9,6 +9,7 @@ import {
   useArtifactHistory,
   useArtifacts,
 } from "../hooks/use-artifacts";
+import { useDialogFocus } from "../hooks/use-dialog-focus";
 import { buildCatalog, type Catalog } from "../lib/catalogs";
 import { saveArtifact, toIpcError } from "../lib/ipc";
 
@@ -49,6 +50,8 @@ export function ArtifactsPanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<IpcError | null>(null);
   const [saved, setSaved] = useState<number | null>(null);
+  const panel = useRef<HTMLElement | null>(null);
+  useDialogFocus(panel, onClose);
 
   const catalog: Catalog<ArtifactView> = buildCatalog({
     loading: threadId !== null && artifacts.isPending,
@@ -156,8 +159,15 @@ export function ArtifactsPanel({
 
   return (
     <div className="library-backdrop" data-testid="artifacts-panel">
-      <section className="library artifacts" role="dialog" aria-modal="true" aria-label="Artifacts">
-        <header className="library-head">
+      <section
+        className="library artifacts"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Artifacts"
+        ref={panel}
+        tabIndex={-1}
+      >
+        <div className="library-head">
           <h2>Artifacts</h2>
           <span className="mcp-kicker">every save is a new version</span>
           <button
@@ -169,7 +179,7 @@ export function ArtifactsPanel({
           >
             ✕
           </button>
-        </header>
+        </div>
 
         {threadId === null && (
           <p className="sidebar-note muted" data-testid="artifacts-no-thread">

@@ -17,6 +17,21 @@
   box-sizing: border-box;
 }
 
+/*
+ * One visible focus indicator for everything, and only for keyboard focus.
+ *
+ * Before this, seven text inputs replaced the UA outline with a border-colour change
+ * (`#33405a`, about 1.3:1 against the panel) — invisible to anyone who needs it, and
+ * WCAG 2.4.11/2.4.13 do not accept a colour shift that faint as a focus indicator.
+ * `:focus-visible` keeps the ring off a mouse click without taking it away from a
+ * caret moving through the app.
+ */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
 html,
 body {
   margin: 0;
@@ -124,7 +139,6 @@ body {
 }
 
 .thread-search:focus {
-  outline: none;
   border-color: #33405a;
 }
 
@@ -363,6 +377,12 @@ body {
   display: flex;
   align-items: center;
   gap: 4px;
+  /* A fieldset for the grouping (the two arrows belong to one control); the default frame,
+     margins and padding are not wanted. Same trade as `.composer`. */
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
 }
 
 .variant-arrow {
@@ -606,7 +626,6 @@ body {
 }
 
 .composer-input:focus {
-  outline: none;
   border-color: #33405a;
 }
 
@@ -793,7 +812,6 @@ body {
 }
 
 .field-input:focus {
-  outline: none;
   border-color: #33405a;
 }
 
@@ -1093,7 +1111,6 @@ body {
 
 .project-new:focus,
 .project-rename:focus {
-  outline: none;
   border-color: #33405a;
 }
 
@@ -1316,7 +1333,6 @@ body {
 
 .library-field input:focus,
 .library-field textarea:focus {
-  outline: none;
   border-color: #33405a;
 }
 
@@ -1848,4 +1864,40 @@ body {
 
 .artifact-readonly-head .field-note {
   margin: 0;
+}
+
+/* ------------------------------------------------- D9: the offline state */
+
+/*
+ * The provider being unreachable is its own state, not a variant of "something failed":
+ * nothing the user did was wrong, nothing they typed was lost, and the only action is to
+ * wait for the connection and retry. It is drawn with the warning colour rather than the
+ * error colour for exactly that reason — a red banner says "you broke something".
+ */
+.settings-offline {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--warn) 45%, var(--line));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--warn) 8%, var(--panel));
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.settings-offline strong,
+.offline-title {
+  color: var(--warn);
+  font-weight: 600;
+}
+
+/* The banner keeps its own (red) frame for a real failure; the offline note inside it is
+   the part that explains the connection, so it is the warning colour. */
+.banner[data-state="offline"] {
+  border-color: color-mix(in srgb, var(--warn) 45%, var(--line));
+  background: color-mix(in srgb, var(--warn) 8%, var(--panel));
+}
+
+.banner[data-state="offline"] .banner-code {
+  color: var(--warn);
 }

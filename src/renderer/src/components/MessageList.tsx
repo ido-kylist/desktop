@@ -5,17 +5,22 @@ import { MessageItem } from "./MessageItem";
 /**
  * The transcript. Regenerate belongs to the newest answer only: regenerating an
  * older turn would fork a branch that the rest of the thread does not continue from.
+ *
+ * `streamingMessageId` names the answer a generation is writing into. It exists so the
+ * live region can be on that message's body and on nothing else — see `Markdown`.
  */
 export function MessageList({
   messages,
   groups,
   busy,
+  streamingMessageId,
   onSwitchVariant,
   onRegenerate,
 }: {
   messages: readonly ChatMessageView[];
   groups: Record<string, VariantGroup>;
   busy: boolean;
+  streamingMessageId: string | null;
   onSwitchVariant: (messageId: string) => void;
   onRegenerate: (messageId: string) => void;
 }): React.JSX.Element {
@@ -48,6 +53,7 @@ export function MessageList({
           variant={groups[message.id]}
           canRegenerate={message.id === lastAssistantId}
           busy={busy}
+          streaming={message.id === streamingMessageId}
           onSwitchVariant={onSwitchVariant}
           onRegenerate={() => onRegenerate(message.id)}
         />
