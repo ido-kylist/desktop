@@ -29,6 +29,7 @@ import { GenerationBus } from "./api/bus.js";
 import { resolveBaseUrl } from "./api/client.js";
 import { GenerationService, type GenerationSink } from "./api/generations.js";
 import { listModels } from "./api/models.js";
+import { attachmentsRoot, createAttachmentHandlers } from "./attachments/handlers.js";
 import { createDb, type DrizzleDb } from "./db/client.js";
 import { countRows, defaultDbPath, hasFts5, openDatabase, schemaVersion } from "./db/index.js";
 import {
@@ -41,7 +42,9 @@ import {
   softDeleteThread,
   updateThread,
 } from "./db/repo.js";
+import { attachToUserMessage, listAttachmentsForMessages } from "./db/repo-attachments.js";
 import { AppError, toIpcError } from "./errors.js";
+import { registerNativeAppHooks, showLauncher } from "./native/handlers.js";
 import { type SecretBackend, type SecretStore, SecretsService } from "./secrets.js";
 
 const HERE = import.meta.dirname;
@@ -187,11 +190,26 @@ function getGenerations(): GenerationService {
  * rather than passed through: the type is the boundary, and a database written by a
  * newer build must not crash an older renderer.
  */
+let attachmentHandlersCache: ReturnType<typeof createAttachmentHandlers> | null = null;
+
+function attachmentHandlers(): ReturnType<typeof createAttachmentHandlers> {
+  attachmentHandlersCache ??= createAttachmentHandlers({
+    db: getOrm(),
+    rootDir: attachmentsRoot(app.getPath("userData")),
+  });
+  return attachmentHandlersCache;
+}
+
 function readThread(threadId: string): ResponseOf<"chat.thread"> {
   const tree = getThreadTree(getOrm(), threadId);
   if (tree === null) {
     throw new AppError("NOT_FOUND", "thread not found", { details: { threadId } });
   }
+
+  const attachments = listAttachmentsForMessages(
+    getOrm(),
+    tree.messages.map((message) => message.id),
+  );
 
   return {
     thread: {
@@ -210,6 +228,7 @@ function readThread(threadId: string): ResponseOf<"chat.thread"> {
       variantOf: message.variantOf,
       variants: message.variants,
       usage: message.usage,
+      attachments: attachments.get(message.id) ?? [],
     })),
     activeLeafId: tree.activeLeafId,
   };
@@ -320,11 +339,33 @@ const handlers: { [C in ChannelName]: Handler<C> } = {
     return { hasKey: false };
   },
 
-  "chat.send": (payload, event) => getGenerations().send(payload, generationSink(event.sender)),
+  "chat.send": async (payload, event) => {
+    const sent = await getGenerations().send(
+      { threadId: payload.threadId, text: payload.text, model: payload.model },
+      generationSink(event.sender),
+    );
+    // Stored by `attachments.add` before send, so the files already exist; this only
+    // claims them for the turn. Claiming after the message row exists keeps the
+    // foreign key honest, and a failure here leaves an orphan file, never a broken row.
+    if (payload.attachmentIds !== undefined && payload.attachmentIds.length > 0) {
+      attachToUserMessage(getOrm(), payload.attachmentIds, sent.userMessageId, sent.threadId);
+    }
+    return sent;
+  },
 
   "chat.stop": ({ generationId }) => getGenerations().stop(generationId),
 
   "chat.thread": ({ threadId }) => readThread(threadId),
+
+  /** Built lazily: the attachments root lives under `app.getPath`, which needs ready. */
+  "attachments.add": (payload) => attachmentHandlers()["attachments.add"](payload),
+  "attachments.preview": (payload) => attachmentHandlers()["attachments.preview"](payload),
+
+  /** The launcher singleton is owned by the native module; this only forwards. */
+  "native.showLauncher": () => {
+    showLauncher();
+    return { ok: true as const };
+  },
 
   /** A sibling under the same parent, streamed by the same orchestrator as `chat.send`. */
   "chat.regenerate": (payload, event) =>
@@ -479,6 +520,9 @@ app.whenReady().then(() => {
 
   serveRenderer();
   registerIpc();
+  // Shortcuts, tray and deep links. Registered after the IPC surface so a deep link
+  // that arrives during launch finds a live bridge rather than a dead one.
+  registerNativeAppHooks();
   createWindow();
 
   app.on("activate", () => {

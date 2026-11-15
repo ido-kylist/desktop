@@ -117,4 +117,23 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 `.trim(),
   },
+  {
+    version: 4,
+    name: "attachments",
+    sql: `
+CREATE TABLE IF NOT EXISTS attachments (
+  id          TEXT PRIMARY KEY,
+  thread_id   TEXT REFERENCES threads (id) ON DELETE CASCADE,
+  message_id  TEXT REFERENCES messages (id) ON DELETE CASCADE,
+  filename    TEXT NOT NULL,
+  mime        TEXT NOT NULL,
+  size_bytes  INTEGER NOT NULL,
+  kind        TEXT NOT NULL CHECK (kind IN ('image','document')),
+  stored_path TEXT NOT NULL,
+  created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS attachments_message_idx ON attachments (message_id);
+CREATE INDEX IF NOT EXISTS attachments_thread_idx ON attachments (thread_id);
+`.trim(),
+  },
 ];

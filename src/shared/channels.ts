@@ -10,7 +10,7 @@
  * every channel listed here has a schema. Adding a name without a schema is a
  * compile error, so the two halves cannot drift.
  */
-export const PROTOCOL_VERSION = 5 as const;
+export const PROTOCOL_VERSION = 6 as const;
 
 export const CHANNEL_NAMES = [
   "app.info",
@@ -30,6 +30,9 @@ export const CHANNEL_NAMES = [
   "settings.get",
   "settings.set",
   "models.list",
+  "attachments.add",
+  "attachments.preview",
+  "native.showLauncher",
 ] as const;
 
 export type ChannelName = (typeof CHANNEL_NAMES)[number];
@@ -44,6 +47,12 @@ export type ChannelName = (typeof CHANNEL_NAMES)[number];
  * without pulling zod into the sandbox bridge.
  */
 export const GENERATION_EVENT_CHANNEL = "generation:event" as const;
+
+/**
+ * Main -> renderer push for `cleon://` deep links. Carries an already-parsed target,
+ * so the renderer never sees a raw URL and never has to trust one.
+ */
+export const DEEP_LINK_CHANNEL = "native:deep-link" as const;
 
 export function isChannelName(value: unknown): value is ChannelName {
   return typeof value === "string" && (CHANNEL_NAMES as readonly string[]).includes(value);

@@ -52,3 +52,16 @@ preferences; each one exists because breaking it produced a real defect.
 - [ ] The thing you changed is exercised by a test that would fail without your change
 - [ ] No comment describes behaviour the code no longer has
 - [ ] Anything you cut is in `BACKLOG.md`
+
+## Operating rule: act, then report
+
+A turn ends with **evidence of work done**, never with a description of work about to
+start. "Next I will dispatch two workers" is not progress; dispatching them is. If a step
+is known and safe, take it in the same turn — narrative is for what happened, not for
+intentions.
+
+Corollary for contracts: when a protocol or schema change is frozen ahead of the code that
+implements it, the integration seam (`src/main/index.ts`) is wired **by the same person in
+the same slice**, not handed back later. An intentionally non-compiling branch means every
+worker downstream reports the same `TS2739` and loses time to a defect the orchestrator
+created.

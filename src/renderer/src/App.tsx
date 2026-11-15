@@ -1,4 +1,4 @@
-import type { IpcError } from "@shared/ipc-contract";
+import type { Attachment, IpcError } from "@shared/ipc-contract";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Composer } from "./components/Composer";
@@ -130,10 +130,21 @@ export function App(): React.JSX.Element {
   }, [threadId]);
 
   const send = useCallback(
-    async (text: string) => {
+    async (text: string, attachments: readonly Attachment[] = []) => {
       // Ids come back from main, not from the renderer: main persists the turn and
       // returns its row ids, and the store adopts exactly those.
-      const result = await sendChat({ threadId: useChatStore.getState().threadId, text, model });
+      //
+      // D4: only the ids of files main already stored travel with the turn. The chips the
+      // store is given are the renderer's copy of the metadata, so the user's own message
+      // can show them without waiting for a re-read.
+      const result = await sendChat({
+        threadId: useChatStore.getState().threadId,
+        text,
+        model,
+        ...(attachments.length === 0
+          ? {}
+          : { attachmentIds: attachments.map((attachment) => attachment.id) }),
+      });
       if (!result.ok) {
         setLastError(result.error);
         return;
@@ -145,6 +156,7 @@ export function App(): React.JSX.Element {
         generationId: result.data.generationId,
         text,
         createdAt: new Date().toISOString(),
+        ...(attachments.length === 0 ? {} : { attachments: [...attachments] }),
       });
       // A new thread has to appear in the sidebar while its answer is still arriving.
       void queryClient.invalidateQueries({ queryKey: THREAD_LIST_KEY });
@@ -283,7 +295,7 @@ export function App(): React.JSX.Element {
               model={model}
               models={catalog}
               onModelChange={setChosenModel}
-              onSend={(text) => void send(text)}
+              onSend={(text, attachments) => void send(text, attachments)}
               onStop={() => void stop()}
             />
           </main>

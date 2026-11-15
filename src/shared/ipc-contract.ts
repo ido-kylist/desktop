@@ -52,6 +52,16 @@ export const ipcResultSchema = <T extends z.ZodTypeAny>(data: T) =>
 
 export type IpcResult<T> = { ok: true; data: T } | { ok: false; error: IpcError };
 
+/** D4: a stored file attached to a message. The bytes never travel in this shape. */
+export const AttachmentSchema = z.object({
+  id: z.uuid(),
+  filename: z.string(),
+  mime: z.string(),
+  sizeBytes: z.number().int().nonnegative(),
+  kind: z.enum(["image", "document"]),
+});
+export type Attachment = z.infer<typeof AttachmentSchema>;
+
 /* ---------------------------------------------------------------- channels */
 
 type Contract = { request: z.ZodTypeAny; response: z.ZodTypeAny };
@@ -114,6 +124,8 @@ export const contracts = {
       threadId: z.uuid().nullable(),
       text: z.string().min(1),
       model: z.string().min(1),
+      /** D4: ids returned by `attachments.add`, already stored and capped. */
+      attachmentIds: z.array(z.uuid()).max(10).optional(),
     }),
     response: z.object({
       threadId: z.uuid(),
@@ -169,6 +181,8 @@ export const contracts = {
             })
             .nullable()
             .optional(),
+          /** D4: files attached to this message, metadata only. */
+          attachments: z.array(AttachmentSchema).optional(),
         }),
       ),
       /** The message whose ancestor path is active; null means "follow the newest leaf". */
@@ -271,6 +285,32 @@ export const contracts = {
       /** Populated when the remote call failed and a fallback was used. */
       message: z.string().nullable(),
     }),
+  },
+
+  /* ----------------------------------------------------- D4 attachments */
+
+  "attachments.add": {
+    request: z.object({
+      /** Absolute paths, as dropped or picked. Main owns the file system; the renderer never does. */
+      paths: z.array(z.string().min(1)).min(1).max(10),
+    }),
+    response: z.object({ attachments: z.array(AttachmentSchema) }),
+  },
+
+  "attachments.preview": {
+    request: z.object({ id: z.uuid() }),
+    response: z.object({
+      /** A data URL for small images only; null means "no inline preview available". */
+      dataUrl: z.string().nullable(),
+      mime: z.string(),
+    }),
+  },
+
+  /* ---------------------------------------------------- D5 native shell */
+
+  "native.showLauncher": {
+    request: z.object({}),
+    response: z.object({ ok: z.literal(true) }),
   },
 } as const satisfies Record<ChannelName, Contract>;
 
