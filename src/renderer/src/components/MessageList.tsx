@@ -1,10 +1,23 @@
+import type { VariantGroup } from "../lib/variants";
 import type { ChatMessageView } from "../store/chat-store";
 import { MessageItem } from "./MessageItem";
 
+/**
+ * The transcript. Regenerate belongs to the newest answer only: regenerating an
+ * older turn would fork a branch that the rest of the thread does not continue from.
+ */
 export function MessageList({
   messages,
+  groups,
+  busy,
+  onSwitchVariant,
+  onRegenerate,
 }: {
   messages: readonly ChatMessageView[];
+  groups: Record<string, VariantGroup>;
+  busy: boolean;
+  onSwitchVariant: (messageId: string) => void;
+  onRegenerate: (messageId: string) => void;
 }): React.JSX.Element {
   if (messages.length === 0) {
     return (
@@ -17,10 +30,27 @@ export function MessageList({
     );
   }
 
+  let lastAssistantId: string | null = null;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message !== undefined && message.role === "assistant") {
+      lastAssistantId = message.id;
+      break;
+    }
+  }
+
   return (
     <div className="messages">
       {messages.map((message) => (
-        <MessageItem key={message.id} message={message} />
+        <MessageItem
+          key={message.id}
+          message={message}
+          variant={groups[message.id]}
+          canRegenerate={message.id === lastAssistantId}
+          busy={busy}
+          onSwitchVariant={onSwitchVariant}
+          onRegenerate={() => onRegenerate(message.id)}
+        />
       ))}
     </div>
   );

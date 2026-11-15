@@ -1,14 +1,34 @@
+import type { VariantGroup } from "../lib/variants";
 import type { ChatMessageView } from "../store/chat-store";
 import { Markdown } from "./Markdown";
 import { ReasoningBlock } from "./ReasoningBlock";
 import { ToolRows } from "./ToolRows";
+import { UsageMeter } from "./UsageMeter";
+import { VariantSwitcher } from "./VariantSwitcher";
 
 /**
  * One turn. Assistant text is Markdown; user text is literal (`white-space:
  * pre-wrap` in CSS), because echoing the user's own words back through a Markdown
  * parser would render their asterisks as formatting they did not write.
+ *
+ * D3 adds the footer: the sibling count when this answer is one of several, the
+ * regenerate affordance on the newest answer, and the meters when one exists.
  */
-export function MessageItem({ message }: { message: ChatMessageView }): React.JSX.Element {
+export function MessageItem({
+  message,
+  variant,
+  canRegenerate,
+  busy,
+  onSwitchVariant,
+  onRegenerate,
+}: {
+  message: ChatMessageView;
+  variant: VariantGroup | undefined;
+  canRegenerate: boolean;
+  busy: boolean;
+  onSwitchVariant: (messageId: string) => void;
+  onRegenerate: () => void;
+}): React.JSX.Element {
   if (message.role === "user") {
     return (
       <article className="msg msg-user" data-role="user">
@@ -25,6 +45,8 @@ export function MessageItem({ message }: { message: ChatMessageView }): React.JS
     );
   }
 
+  const usage = message.usage ?? null;
+
   return (
     <article className="msg msg-assistant" data-role="assistant">
       {message.reasoning !== "" && <ReasoningBlock text={message.reasoning} />}
@@ -33,6 +55,26 @@ export function MessageItem({ message }: { message: ChatMessageView }): React.JS
         <Markdown text={message.text} />
       ) : (
         message.errorCode === null && <span className="muted">…</span>
+      )}
+
+      {(variant !== undefined || canRegenerate || usage !== null) && (
+        <div className="msg-footer">
+          {variant !== undefined && (
+            <VariantSwitcher group={variant} busy={busy} onPick={onSwitchVariant} />
+          )}
+          {canRegenerate && (
+            <button
+              type="button"
+              className="link-btn"
+              disabled={busy}
+              onClick={onRegenerate}
+              data-testid="regenerate"
+            >
+              Regenerate
+            </button>
+          )}
+          {usage !== null && <UsageMeter usage={usage} />}
+        </div>
       )}
     </article>
   );

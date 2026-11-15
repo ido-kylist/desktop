@@ -1,5 +1,6 @@
 import type { ErrorCode, GenerationEvent, IpcError } from "@shared/ipc-contract";
 import { create } from "zustand";
+import type { Usage } from "../lib/format";
 
 /**
  * The conversation, as the renderer knows it.
@@ -34,6 +35,11 @@ export interface ChatMessageView {
   errorCode: ErrorCode | null;
   /** Highest event `seq` applied to this message's generation. */
   lastSeq: number;
+  /**
+   * The meters for this turn. Null means no generation ever reported numbers — it is
+   * absence, not zero, and the UI renders nothing rather than inventing `$0.0000`.
+   */
+  usage?: Usage | null;
 }
 
 export interface StreamingState {
@@ -56,6 +62,12 @@ export interface ChatState {
   streaming: StreamingState | null;
   lastError: IpcError | null;
 
+  /**
+   * Puts a thread on screen — or, with null, clears the selection for a new chat.
+   * The previous transcript is dropped immediately so it cannot be read as belonging
+   * to the thread that is about to load.
+   */
+  selectThread: (threadId: string | null) => void;
   /** Replaces the conversation with what `chat.thread` returned. */
   hydrate: (threadId: string, messages: readonly ChatMessageView[]) => void;
   /** Drops the conversation and its thread id (a thread the database no longer has). */
@@ -195,7 +207,20 @@ function applyGenerationEvent(state: ChatState, event: GenerationEvent): Partial
     }
 
     case "usage":
-      return replaceMessage(state, index, { ...message, lastSeq: event.seq }, advanced);
+      return replaceMessage(
+        state,
+        index,
+        {
+          ...message,
+          lastSeq: event.seq,
+          usage: {
+            promptTokens: event.promptTokens,
+            completionTokens: event.completionTokens,
+            costMicrocents: event.costMicrocents,
+          },
+        },
+        advanced,
+      );
 
     case "done":
       return replaceMessage(
@@ -224,12 +249,53 @@ export const useChatStore = create<ChatState>()((set) => ({
   streaming: null,
   lastError: null,
 
+  selectThread: (threadId) =>
+    set((state) => {
+      if (state.threadId === threadId) return {};
+      return { threadId, messages: [], streaming: null, lastError: null };
+    }),
+
+  /**
+   * The snapshot wins on structure, the live stream wins on text.
+   *
+   * A `chat.thread` read can come back while tokens are still arriving (a variant
+   * switch, a regenerate refresh), and the snapshot was taken before the newest
+   * deltas. Keeping the live text of a message whose `lastSeq` has advanced is what
+   * stops a refetch from truncating an answer mid-stream; the snapshot still decides
+   * which messages are on the active path.
+   */
   hydrate: (threadId, messages) =>
-    set({
-      threadId,
-      messages: messages.map((message) => ({ ...message })),
-      streaming: null,
-      lastError: null,
+    set((state) => {
+      const live = new Map<string, ChatMessageView>();
+      if (state.threadId === threadId) {
+        for (const message of state.messages) live.set(message.id, message);
+      }
+
+      const merged = messages.map((message) => {
+        const existing = live.get(message.id);
+        if (existing === undefined || existing.lastSeq === 0) return { ...message };
+        return {
+          ...message,
+          text: existing.text,
+          reasoning: existing.reasoning,
+          toolCalls: existing.toolCalls,
+          lastSeq: existing.lastSeq,
+          usage: message.usage ?? existing.usage,
+        };
+      });
+
+      // A stream survives the refresh only if its turn is still on the new path.
+      const generations = new Set(
+        merged
+          .map((message) => message.generationId)
+          .filter((generationId): generationId is string => generationId !== null),
+      );
+      const streaming =
+        state.streaming !== null && generations.has(state.streaming.generationId)
+          ? state.streaming
+          : null;
+
+      return { threadId, messages: merged, streaming, lastError: null };
     }),
 
   forgetThread: () => set({ threadId: null, messages: [], streaming: null, lastError: null }),
