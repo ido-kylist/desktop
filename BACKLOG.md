@@ -35,3 +35,23 @@ Work consciously deferred. Nothing here is a surprise in a demo, because it is w
 - **Real-key leg of G1.** The stream → quit → relaunch path is proven against the mock; a real
   provider needs an owner credential. No code change required.
 
+## Deferred from D2/D3
+
+- **No performance measurement.** G2's gate is "500 threads · p95 < 100 ms · 60 fps". The
+  implementation is O(visible) with server-side pagination, but nothing was timed. Needs a
+  `scripts/perf` harness that seeds 500 threads and records real numbers in `PERF.md`.
+- **Fork and user-message branching.** `chat.regenerate` creates assistant siblings; editing a
+  user message into a branch and forking a subtree at an arbitrary message are not implemented.
+- **Migration 1 → 2 upgrade is verified but not tested.** The upgrade was proven by hand against
+  a real v1 database; `openDatabase` is a module singleton, so encoding it needs a small seam.
+- **`regenerate` model fallback.** `messages.model` is nullable while `generations.model` is not,
+  so a model-less row regenerates with `""`. Every row `chat.send` writes has a model.
+- **No title generation.** Every new thread is literally "New thread" until renamed.
+- **Row actions and Regenerate have no committed tests.** Exercised by hand in a throwaway
+  script (rename/pin/archive/delete, variant switching, meters), not in the suite.
+- **`parseSnippet`, `formatCost`, `relativeTime`, `sumUsage` are unit-untested** — the three
+  mandated test files did not cover them.
+- **Store latency:** a `usage` event arriving *after* `done` would re-arm `streaming`. Unreachable
+  today because main emits usage first; worth a guard when D7 adds usage from tool calls.
+
+
