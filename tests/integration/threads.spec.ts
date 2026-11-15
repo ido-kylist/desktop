@@ -11,6 +11,7 @@ import {
   updateThread,
 } from "../../src/main/db/repo.js";
 import { AppError } from "../../src/main/errors.js";
+import { MIGRATIONS } from "../../src/main/db/migrations.js";
 import { contracts } from "../../src/shared/ipc-contract";
 
 /**
@@ -214,8 +215,10 @@ beforeEach(() => {
 });
 
 describe("schema", () => {
-  it("applies migration 2 and exposes active_leaf_id", () => {
-    expect(schemaVersion(conn)).toBe(2);
+  it("applies every migration and exposes active_leaf_id", () => {
+    // Derived from the ledger so adding a migration never breaks this assertion.
+    const latest = MIGRATIONS.at(-1)?.version;
+    expect(schemaVersion(conn)).toBe(latest);
 
     const columns = conn.prepare("PRAGMA table_info(threads)").all() as { name: string }[];
     expect(columns.map((column) => column.name)).toContain("active_leaf_id");
