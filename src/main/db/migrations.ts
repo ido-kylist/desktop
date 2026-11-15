@@ -88,4 +88,22 @@ CREATE TRIGGER IF NOT EXISTS messages_fts_au AFTER UPDATE OF text ON messages BE
 END;
 `.trim(),
   },
+  {
+    /**
+     * Which variant of a branched thread is on screen.
+     *
+     * Nullable on purpose: null means "follow the newest leaf", which is what every
+     * thread written before D3 does and what an unbranched thread keeps doing. A
+     * non-null id is a message the user explicitly selected with
+     * `chat.setActiveVariant`, and it is the leaf the next turn hangs under.
+     *
+     * No foreign key: the column is a hint, not an authority. A leaf that was
+     * soft-deleted or never belonged to the thread is ignored by the read, which
+     * falls back to the newest leaf rather than failing a whole conversation over
+     * a stale pointer.
+     */
+    version: 2,
+    name: "thread-active-leaf",
+    sql: "ALTER TABLE threads ADD COLUMN active_leaf_id TEXT;",
+  },
 ];

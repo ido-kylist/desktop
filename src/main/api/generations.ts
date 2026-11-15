@@ -4,9 +4,13 @@ import type { DrizzleDb } from "../db/client.js";
 import {
   createThread,
   finishGeneration,
+  getMessage,
   getThreadWithMessages,
   insertGeneration,
   insertMessage,
+  regenerate as regenerateTurn,
+  resolveActivePath,
+  resolveAncestorPath,
   touchThread,
   updateMessageText,
 } from "../db/repo.js";
@@ -91,15 +95,19 @@ interface RunContext {
  * a turn that never produced text (an interrupted or failed generation), and an
  * empty assistant message in the prompt is noise the model may imitate.
  */
-function toChatMessages(history: readonly Message[], userText: string): ChatMessage[] {
+function toPrompt(history: readonly Message[]): ChatMessage[] {
   const messages: ChatMessage[] = [];
   for (const message of history) {
     if (message.text === "") continue;
     if (message.role === "tool") continue;
     messages.push({ role: message.role, content: message.text });
   }
-  messages.push({ role: "user", content: userText });
   return messages;
+}
+
+/** A new turn's prompt: the active path so far, then the message being sent. */
+function toChatMessages(history: readonly Message[], userText: string): ChatMessage[] {
+  return [...toPrompt(history), { role: "user", content: userText }];
 }
 
 function accumulateToolCall(
@@ -168,12 +176,21 @@ export class GenerationService {
       });
     }
 
+    /**
+     * A new turn hangs under the leaf the user is looking at, and its prompt is that
+     * leaf's ancestor path — not every message in the thread. In an unbranched thread
+     * the two are the same list, so nothing changes; once an answer has been
+     * regenerated they are not, and continuing from a variant the user rejected
+     * would be wrong.
+     */
+    const path = existing === null ? [] : resolveActivePath(existing);
+
     const threadId = request.threadId ?? randomUUID();
-    const parentId = existing?.messages.at(-1)?.id ?? null;
+    const parentId = path.at(-1)?.id ?? null;
     const userMessageId = randomUUID();
     const assistantMessageId = randomUUID();
     const generationId = randomUUID();
-    const history = toChatMessages(existing?.messages ?? [], request.text);
+    const history = toChatMessages(path, request.text);
 
     // One transaction, because a half-written turn is worse than no turn: a
     // thread with a user message and no generation row would look like a turn
@@ -210,6 +227,65 @@ export class GenerationService {
       touchThread(tx, threadId);
     });
 
+    this.startTurn(
+      { generationId, threadId, assistantMessageId, model: request.model, history },
+      sink,
+    );
+
+    return { threadId, userMessageId, assistantMessageId, generationId };
+  }
+
+  /**
+   * Regenerates an assistant message: a sibling under the same parent, streamed by
+   * the same orchestrator `chat.send` uses.
+   *
+   * The rows are written before the network call, exactly as a new turn's are, and
+   * the prompt is the ancestor path up to the message being answered — so the second
+   * answer is given the same question the first one got, with no trace of the answer
+   * it is replacing.
+   */
+  regenerate(messageId: string, sink: GenerationSink): ResponseOf<"chat.regenerate"> {
+    const result = regenerateTurn(this.db, messageId);
+
+    const loaded = getThreadWithMessages(this.db, result.threadId);
+    const path = loaded === null ? [] : resolveAncestorPath(loaded, result.userMessageId);
+    // The regenerated turn runs on the model of the answer it replaces; the repo
+    // copies it onto the new row, which is where this reads it from.
+    const model = getMessage(this.db, result.assistantMessageId)?.model ?? "";
+
+    this.startTurn(
+      {
+        generationId: result.generationId,
+        threadId: result.threadId,
+        assistantMessageId: result.assistantMessageId,
+        model,
+        history: toPrompt(path),
+      },
+      sink,
+    );
+
+    return result;
+  }
+
+  /**
+   * Registers a generation on the bus and runs it detached.
+   *
+   * Shared by `send` and `regenerate` so there is exactly one place that owns the
+   * abort controller, the bus subscription and the release — the ids are the
+   * response, the answer is the stream.
+   */
+  private startTurn(
+    input: {
+      generationId: string;
+      threadId: string;
+      assistantMessageId: string;
+      model: string;
+      history: ChatMessage[];
+    },
+    sink: GenerationSink,
+  ): void {
+    const { generationId, threadId, assistantMessageId, model, history } = input;
+
     const controller = new AbortController();
     const unsubscribe = this.bus.subscribe(generationId, sink);
     this.active.set(generationId, { controller, unsubscribe });
@@ -230,7 +306,7 @@ export class GenerationService {
       generationId,
       threadId,
       assistantMessageId,
-      model: request.model,
+      model,
       history,
       signal: controller.signal,
       release,
@@ -249,8 +325,6 @@ export class GenerationService {
         );
       })
       .finally(release);
-
-    return { threadId, userMessageId, assistantMessageId, generationId };
   }
 
   /**

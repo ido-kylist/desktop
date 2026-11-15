@@ -155,9 +155,84 @@ export const contracts = {
           createdAt: z.iso.datetime(),
           generationId: z.uuid().nullable(),
           errorCode: ErrorCodeSchema.nullable(),
+          /** Tree position (D3). Absent on oldest rows means "root". */
+          parentId: z.uuid().nullable().optional(),
+          variantOf: z.uuid().nullable().optional(),
+          /** Sibling ids that share a parent — the "2 / 3" affordance. */
+          variants: z.array(z.uuid()).optional(),
+          /** Per-message meters from the generations row, when one exists. */
+          usage: z
+            .object({
+              promptTokens: z.number().int().nonnegative(),
+              completionTokens: z.number().int().nonnegative(),
+              costMicrocents: z.number().int().nonnegative(),
+            })
+            .nullable()
+            .optional(),
         }),
       ),
+      /** The message whose ancestor path is active; null means "follow the newest leaf". */
+      activeLeafId: z.uuid().nullable().optional(),
     }),
+  },
+
+  /* ---------------------------------------------------------------- D3 tree */
+
+  "chat.regenerate": {
+    request: z.object({ messageId: z.uuid() }),
+    response: z.object({
+      threadId: z.uuid(),
+      userMessageId: z.uuid(),
+      assistantMessageId: z.uuid(),
+      generationId: z.uuid(),
+    }),
+  },
+
+  "chat.setActiveVariant": {
+    request: z.object({ threadId: z.uuid(), messageId: z.uuid() }),
+    response: z.object({ ok: z.literal(true) }),
+  },
+
+  /* -------------------------------------------------------------- D2 history */
+
+  "threads.list": {
+    request: z.object({
+      /** FTS5 match against message text; omitted or empty means "everything". */
+      query: z.string().max(500).optional(),
+      limit: z.number().int().min(1).max(200),
+      offset: z.number().int().min(0),
+      includeArchived: z.boolean(),
+    }),
+    response: z.object({
+      items: z.array(
+        z.object({
+          id: z.uuid(),
+          title: z.string(),
+          updatedAt: z.iso.datetime(),
+          pinned: z.boolean(),
+          archivedAt: z.iso.datetime().nullable(),
+          messageCount: z.number().int().nonnegative(),
+          /** First matching line of text, for the search result row. */
+          snippet: z.string().nullable(),
+        }),
+      ),
+      total: z.number().int().nonnegative(),
+    }),
+  },
+
+  "threads.update": {
+    request: z.object({
+      threadId: z.uuid(),
+      title: z.string().min(1).max(200).optional(),
+      pinned: z.boolean().optional(),
+      archived: z.boolean().optional(),
+    }),
+    response: z.object({ ok: z.literal(true) }),
+  },
+
+  "threads.delete": {
+    request: z.object({ threadId: z.uuid() }),
+    response: z.object({ ok: z.literal(true) }),
   },
 } as const satisfies Record<ChannelName, Contract>;
 
