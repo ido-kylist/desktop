@@ -16,7 +16,7 @@ import type {
   ResponseOf,
 } from "@shared/ipc-contract";
 import type { IpcRendererEvent } from "electron";
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 
 /**
  * A parsed `cleon://thread/<uuid>` link, as main sends it.
@@ -38,6 +38,8 @@ interface DeepLinkTarget {
 
 /** `CleonApi` plus the one method the frozen contract does not declare yet. */
 interface CleonApiWithDeepLinks extends CleonApi {
+  /** Electron 45 removed `File.path`; this is the supported replacement. */
+  filePath(file: File): string;
   onDeepLink(listener: (target: DeepLinkTarget) => void): () => void;
 }
 
@@ -82,6 +84,19 @@ const api: CleonApiWithDeepLinks = {
    * `IpcRendererEvent` is stripped, and the listener is handed a target that main
    * already parsed and validated. A raw URL never crosses this boundary.
    */
+  /**
+   * Electron 45 removed `File.path`. This is the supported replacement and the only
+   * way the renderer can learn a dropped or pasted file's location; the file itself
+   * never crosses into main, only its path.
+   */
+  filePath(file: File): string {
+    try {
+      return webUtils.getPathForFile(file);
+    } catch {
+      return "";
+    }
+  },
+
   onDeepLink(listener: (target: DeepLinkTarget) => void): () => void {
     const handler = (_ipcEvent: IpcRendererEvent, target: DeepLinkTarget): void => {
       listener(target);

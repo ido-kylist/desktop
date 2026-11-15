@@ -162,7 +162,7 @@ export function Composer({
     // fieldset rather than a div because that is the element for "these controls belong
     // together", and it makes the drop target a labelled group instead of an anonymous box.
     <fieldset
-      aria-label="Message composer"
+      aria-label="Composer"
       className="composer"
       data-dragging={dragging}
       onDragOver={(event) => {

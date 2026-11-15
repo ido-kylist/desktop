@@ -55,7 +55,7 @@ function launcherWindow(): Launcher {
   return launcher;
 }
 
-function showLauncher(): void {
+export function showLauncher(): void {
   launcherWindow().show();
 }
 

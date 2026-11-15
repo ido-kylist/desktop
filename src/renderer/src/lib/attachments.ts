@@ -205,9 +205,20 @@ export function attachmentPathsFromFiles(files: readonly unknown[]): {
   const paths: string[] = [];
   const unresolved: string[] = [];
 
+  // Electron 45 removed `File.path`; the preload exposes webUtils.getPathForFile
+  // as `cleon.filePath`. Read it lazily so this stays pure and testable.
+  const bridge = (globalThis as { cleon?: { filePath?: (file: unknown) => string } }).cleon;
+
   for (const entry of files) {
     const file = entry as { path?: unknown; name?: unknown } | null;
-    const path = typeof file?.path === "string" ? file.path.trim() : "";
+    let path = typeof file?.path === "string" ? file.path.trim() : "";
+    if (path === "" && typeof bridge?.filePath === "function") {
+      try {
+        path = (bridge.filePath(entry) ?? "").trim();
+      } catch {
+        path = "";
+      }
+    }
     if (path !== "") {
       paths.push(path);
       continue;
