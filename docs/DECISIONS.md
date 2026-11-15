@@ -122,3 +122,28 @@ A test hook that changes where data lives is preferable to tests that pretend to
 
 
 
+
+## P0 — verification against the real Sciforium endpoint
+
+Tested the shipped code path against `https://api.sciforium.com` with the owner's key
+(six requests total, nothing bursty). Verified: non-streaming 200 in 0.5 s, SSE streaming
+with `finish_reason: stop` then `[DONE]`, `/v1/models` returning 14+ models, `secrets.setKey`
+storing under `safeStorage` (`••••Yz44`), settings persisting, and the app's own IPC
+`chat.send` reaching the provider.
+
+**One blocking quirk, found before the owner could hit it:** the `/v1/models` catalog returns
+*bare* ids (`deepseek-ai/DeepSeek-V4.1-Flash-1017`), but `/v1/chat/completions` rejects them:
+
+```
+400 INVALID_DEPLOYMENT_TARGET
+"Model must be prefixed with \"/deployments/{serverless|poolId}/\"; the bare model format is no longer supported."
+```
+
+`/deployments/serverless/deepseek-ai/DeepSeek-V4.1-Flash-1017` works. So on this provider the
+usable model id carries a deployment prefix that the catalog does not advertise. The app
+surfaced the provider's message verbatim, which is the only reason this took one step to
+diagnose — the error taxonomy did its job.
+
+**Follow-up:** the Settings model field must accept a typed id (not only the catalog select),
+and `models.list` should say that catalog ids may need a deployment prefix on this provider.
+Recorded in `BACKLOG.md`; not a release blocker, because the user can paste the working id.
