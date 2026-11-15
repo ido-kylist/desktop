@@ -121,50 +121,47 @@ test.afterAll(async () => {
  * Remove the `.fixme` at that point: this test is then the acceptance test for the
  * slice.
  */
-test(
-  "saves a provider endpoint, lists its models, and streams a turn against it",
-  async () => {
-    const userData = await makeUserData();
-    const { app, win } = await launch(userData);
+test("saves a provider endpoint, lists its models, and streams a turn against it", async () => {
+  const userData = await makeUserData();
+  const { app, win } = await launch(userData);
 
-    try {
-      await win.getByTestId("open-settings").click();
-      await expect(win.getByTestId("settings")).toBeVisible();
+  try {
+    await win.getByTestId("open-settings").click();
+    await expect(win.getByTestId("settings")).toBeVisible();
 
-      // A fresh profile has no key, and the screen says what that means upstream.
-      await expect(win.getByTestId("key-missing")).toContainText("will not send one");
+    // A fresh profile has no key, and the screen says what that means upstream.
+    await expect(win.getByTestId("key-missing")).toContainText("will not send one");
 
-      // Save the endpoint the app must now use. The field starts empty on a fresh profile.
-      await win.getByLabel("Base URL").fill(base);
-      await win.getByTestId("save-base-url").click();
-      await expect(win.getByTestId("base-url-saved")).toBeVisible();
+    // Save the endpoint the app must now use. The field starts empty on a fresh profile.
+    await win.getByLabel("Base URL").fill(base);
+    await win.getByTestId("save-base-url").click();
+    await expect(win.getByTestId("base-url-saved")).toBeVisible();
 
-      // The model list is the endpoint's answer, not a constant.
-      await expect(win.getByTestId("model-select")).toContainText("mock/text", { timeout: 15_000 });
-      await win.getByLabel("Default model").selectOption("mock/text");
+    // The model list is the endpoint's answer, not a constant.
+    await expect(win.getByTestId("model-select")).toContainText("mock/text", { timeout: 15_000 });
+    await win.getByLabel("Default model").selectOption("mock/text");
 
-      // Test connection: the count, and the source said honestly.
-      await win.getByTestId("test-connection").click();
-      const connection = win.getByTestId("connection-result");
-      await expect(connection).toContainText("models available", { timeout: 15_000 });
-      await expect(connection).toContainText("Source: remote");
+    // Test connection: the count, and the source said honestly.
+    await win.getByTestId("test-connection").click();
+    const connection = win.getByTestId("connection-result");
+    await expect(connection).toContainText("models available", { timeout: 15_000 });
+    await expect(connection).toContainText("Source: remote");
 
-      await win.getByTestId("settings-done").click();
+    await win.getByTestId("settings-done").click();
 
-      // The composer's picker is the same catalogue, and the chosen model survived.
-      await expect(win.getByLabel("Model")).toHaveValue("mock/text");
+    // The composer's picker is the same catalogue, and the chosen model survived.
+    await expect(win.getByLabel("Model")).toHaveValue("mock/text");
 
-      // The turn streams through the configured endpoint. If the base URL were not in
-      // effect, this would go to the unpackaged default and never answer.
-      await win.getByLabel("Message").fill("hi");
-      await win.getByLabel("Message").press("Enter");
+    // The turn streams through the configured endpoint. If the base URL were not in
+    // effect, this would go to the unpackaged default and never answer.
+    await win.getByLabel("Message").fill("hi");
+    await win.getByLabel("Message").press("Enter");
 
-      const stop = win.getByRole("button", { name: "Stop" });
-      await expect(stop).toBeVisible({ timeout: 15_000 });
-      await expect(win.getByText("Hello from the mock.")).toBeVisible({ timeout: 20_000 });
-      await expect(stop).toHaveCount(0, { timeout: 20_000 });
-    } finally {
-      await app.close();
-    }
-  },
-);
+    const stop = win.getByRole("button", { name: "Stop" });
+    await expect(stop).toBeVisible({ timeout: 15_000 });
+    await expect(win.getByText("Hello from the mock.")).toBeVisible({ timeout: 20_000 });
+    await expect(stop).toHaveCount(0, { timeout: 20_000 });
+  } finally {
+    await app.close();
+  }
+});
