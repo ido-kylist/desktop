@@ -179,7 +179,7 @@ test("shows the budget banner without a retry affordance", async () => {
   const { app, win } = await launch(userData);
 
   try {
-    await win.getByLabel("Model").selectOption("mock/402");
+    await win.getByLabel("Model").fill("mock/402");
     await win.getByLabel("Message").fill("expensive");
     await win.getByLabel("Message").press("Enter");
 
@@ -202,7 +202,7 @@ test("retries a retryable failure with the same user text", async () => {
   const { app, win } = await launch(userData);
 
   try {
-    await win.getByLabel("Model").selectOption("mock/truncated");
+    await win.getByLabel("Model").fill("mock/truncated");
     await win.getByLabel("Message").fill("tell me everything");
     await win.getByLabel("Message").press("Enter");
 
@@ -229,7 +229,7 @@ test("counts down a rate limit before allowing a retry", async () => {
   const { app, win } = await launch(userData);
 
   try {
-    await win.getByLabel("Model").selectOption("mock/429");
+    await win.getByLabel("Model").fill("mock/429");
     await win.getByLabel("Message").fill("again");
     await win.getByLabel("Message").press("Enter");
 

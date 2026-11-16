@@ -105,7 +105,7 @@ async function launch(directory: string): Promise<{ app: ElectronApplication; wi
 async function ask(win: Page): Promise<void> {
   // The mock's catalogue is built in, and `mock/text` is its first entry — selecting it
   // explicitly keeps the test from depending on which model the default lands on.
-  await win.getByTestId("composer-model").selectOption("mock/text");
+  await win.getByTestId("composer-model-input").fill("mock/text");
   await win.getByTestId("use-knowledge").check();
   await win.getByLabel("Message").fill("what is the peak output of the inverter?");
   // `exact` because the diagnostics strip also has a "Send ping" button.

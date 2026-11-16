@@ -477,6 +477,8 @@ export function App(): React.JSX.Element {
                   error={turnError}
                   retryText={retryText}
                   onRetry={(text) => void send(text, [], useKnowledge)}
+                  onUseModel={setChosenModel}
+                  currentModel={model}
                 />
               )}
             </section>

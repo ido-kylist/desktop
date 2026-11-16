@@ -1,6 +1,7 @@
 import type { IpcError } from "@shared/ipc-contract";
 import { useEffect, useMemo, useState } from "react";
 import { isProviderUnreachable, OFFLINE_DETAIL, OFFLINE_TITLE } from "../lib/connectivity";
+import { suggestDeploymentModel } from "../lib/models";
 
 function remainingMs(deadline: number | null): number {
   if (deadline === null) return 0;
@@ -28,10 +29,15 @@ export function ErrorBanner({
   error,
   retryText,
   onRetry,
+  onUseModel,
+  currentModel,
 }: {
   error: IpcError;
   retryText: string | null;
   onRetry: (text: string) => void;
+  /** Offered only when the provider names a missing deployment prefix. */
+  onUseModel?: (id: string) => void;
+  currentModel?: string;
 }): React.JSX.Element {
   // Memoised on the error object: `Date.now()` on every render would rearm the timer
   // below on every render.
@@ -54,6 +60,12 @@ export function ErrorBanner({
 
   const retryable = error.code !== "BUDGET_EXCEEDED" && retryText !== null;
   const offline = isProviderUnreachable(error);
+  // Only when the provider actually says the id needs a prefix, and only when we know
+  // what the user typed — otherwise the button would guess.
+  const suggestedModel =
+    onUseModel !== undefined && currentModel !== undefined
+      ? suggestDeploymentModel(error.message, currentModel)
+      : null;
 
   return (
     <div
@@ -76,6 +88,16 @@ export function ErrorBanner({
       )}
       {error.code === "BUDGET_EXCEEDED" && (
         <span className="banner-note">Retrying will not change the answer.</span>
+      )}
+      {suggestedModel !== null && onUseModel !== undefined && (
+        <button
+          type="button"
+          className="btn"
+          data-testid="use-deployment-model"
+          onClick={() => onUseModel(suggestedModel)}
+        >
+          Use <span className="mono">{suggestedModel}</span>
+        </button>
       )}
       {retryable && (
         <button

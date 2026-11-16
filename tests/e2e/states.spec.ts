@@ -139,7 +139,9 @@ test("settings: a provider that has not answered yet shows loading, not an empty
     // The request is open (the blackhole never answers), so this is the loading state and
     // not a race: the select is disabled and the note says what is happening.
     await expect(win.getByTestId("model-note")).toContainText("Loading models…");
-    await expect(win.getByTestId("model-select")).toBeDisabled();
+    // Free text, so the field works before the catalogue answers; the note is what says
+    // the list itself has not arrived. A disabled field would block a valid typed id.
+    await expect(win.getByTestId("model-input")).toBeEnabled();
 
     // The composer says the same thing, from the same query.
     await win.getByTestId("settings-done").click();
