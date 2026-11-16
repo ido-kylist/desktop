@@ -361,23 +361,24 @@ export function Composer({
         {assistantId === null ? (
           <label className="model-picker">
             <span>Model</span>
-            <select
+            {/* Free text: a deployment-prefixed id is a valid model even when the
+                endpoint's catalog does not list it. */}
+            <input
+              className="field-input mono"
               aria-label="Model"
-              data-testid="composer-model"
+              data-testid="composer-model-input"
+              list="composer-model-suggestions"
               value={model}
-              disabled={models.state !== "ready"}
+              placeholder="/deployments/serverless/model-id"
+              spellCheck={false}
+              autoComplete="off"
               onChange={(event) => onModelChange(event.target.value)}
-            >
-              {models.state === "ready" ? (
-                models.options.map((option) => (
-                  <option key={option.id} value={option.id}>
-                    {option.id}
-                  </option>
-                ))
-              ) : (
-                <option value={model}>{model}</option>
-              )}
-            </select>
+            />
+            <datalist id="composer-model-suggestions">
+              {models.state === "ready"
+                ? models.options.map((option) => <option key={option.id} value={option.id} />)
+                : null}
+            </datalist>
           </label>
         ) : (
           // With an assistant picked there is nothing to select: the model and the

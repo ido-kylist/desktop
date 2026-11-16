@@ -115,7 +115,7 @@ test("a save appends a version, and an old one is still readable afterwards", as
     await win.getByTestId("artifacts-close").click();
 
     // 2. A thread to file the artifact under.
-    await win.getByTestId("composer-model").selectOption("mock/text");
+    await win.getByTestId("composer-model-input").fill("mock/text");
     await win.getByLabel("Message").fill("start a thread");
     await win.getByRole("button", { name: "Send", exact: true }).click();
     await expect(win.getByText("Hello from the mock.")).toBeVisible({ timeout: 20_000 });

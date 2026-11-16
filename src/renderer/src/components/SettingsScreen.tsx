@@ -5,7 +5,7 @@ import { useModelCatalog } from "../hooks/use-model-catalog";
 import { SETTINGS_KEY, useSettings } from "../hooks/use-settings";
 import { isProviderUnreachable, OFFLINE_DETAIL, OFFLINE_TITLE } from "../lib/connectivity";
 import { clearApiKey, setApiKey, setSettings, toIpcError } from "../lib/ipc";
-import { describeCatalog, type ModelCatalog } from "../lib/models";
+import { describeCatalog, isModelInCatalog, type ModelCatalog } from "../lib/models";
 import {
   isDirty,
   keyStatus,
@@ -50,6 +50,8 @@ export function SettingsScreen({
   const [probeResult, setProbeResult] = useState<ModelCatalog | null>(null);
   const [probing, setProbing] = useState(false);
   /** D8: the embedding model draft. Null means "follow what main saved". */
+  /** Null means "follow what is saved"; a string is an unsaved edit. */
+  const [modelDraft, setModelDraft] = useState<string | null>(null);
   const [embeddingDraft, setEmbeddingDraft] = useState<string | null>(null);
   const [embeddingBusy, setEmbeddingBusy] = useState(false);
   const [embeddingSaved, setEmbeddingSaved] = useState(false);
@@ -180,6 +182,7 @@ export function SettingsScreen({
   };
 
   const catalogLine = describeCatalog(catalog);
+  const inCatalog = isModelInCatalog(catalog, model);
   const probeLine = probeResult === null ? null : describeCatalog(probeResult);
   const missingKey = form === null ? null : missingKeyNote(form.hasKey);
   /**
@@ -354,25 +357,50 @@ export function SettingsScreen({
               <h3>Model</h3>
               <label className="field">
                 <span>Default model</span>
-                <select
-                  className="field-input"
+                {/* Free text, like Base URL: catalog ids are a starting point, not the
+                    set of legal values. Providers increasingly require a deployment
+                    prefix that their own catalog does not advertise. */}
+                <input
+                  className="field-input mono"
                   aria-label="Default model"
-                  data-testid="model-select"
-                  value={model}
-                  disabled={catalog.state !== "ready"}
-                  onChange={(event) => void chooseModel(event.target.value)}
-                >
-                  {catalog.state === "ready" ? (
-                    catalog.options.map((option) => (
-                      <option key={option.id} value={option.id}>
-                        {option.id}
-                      </option>
-                    ))
-                  ) : (
-                    <option value={model}>{model}</option>
-                  )}
-                </select>
+                  data-testid="model-input"
+                  list="model-suggestions"
+                  value={modelDraft ?? model}
+                  placeholder={
+                    catalog.state === "ready" && catalog.options[0]
+                      ? catalog.options[0].id
+                      : "/deployments/serverless/model-id"
+                  }
+                  spellCheck={false}
+                  autoComplete="off"
+                  onChange={(event) => setModelDraft(event.target.value)}
+                />
+                <datalist id="model-suggestions">
+                  {catalog.state === "ready"
+                    ? catalog.options.map((option) => <option key={option.id} value={option.id} />)
+                    : null}
+                </datalist>
               </label>
+              <div className="settings-actions">
+                <button
+                  type="button"
+                  className="btn btn-small"
+                  data-testid="save-model"
+                  disabled={modelDraft === null || modelDraft === model}
+                  onClick={() => {
+                    const next = modelDraft;
+                    setModelDraft(null);
+                    if (next !== null) void chooseModel(next);
+                  }}
+                >
+                  Save
+                </button>
+                {inCatalog ? null : (
+                  <span className="warn" data-testid="model-not-in-catalog">
+                    Not in this endpoint&rsquo;s catalog — sending anyway
+                  </span>
+                )}
+              </div>
               <p className={`field-note ${catalogLine.tone}`} data-testid="model-note">
                 {catalogLine.text}
               </p>

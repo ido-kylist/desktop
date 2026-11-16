@@ -137,9 +137,11 @@ test("saves a provider endpoint, lists its models, and streams a turn against it
     await win.getByTestId("save-base-url").click();
     await expect(win.getByTestId("base-url-saved")).toBeVisible();
 
-    // The model list is the endpoint's answer, not a constant.
-    await expect(win.getByTestId("model-select")).toContainText("mock/text", { timeout: 15_000 });
-    await win.getByLabel("Default model").selectOption("mock/text");
+    // The model is free text; the endpoint's catalogue is only a suggestion list.
+    await expect(win.getByTestId("model-input")).not.toHaveValue("", { timeout: 15_000 });
+    const configuredModel = await win.getByTestId("model-input").inputValue();
+    // Save is offered only for a real edit: an unchanged value must not be writable.
+    await expect(win.getByTestId("save-model")).toBeDisabled();
 
     // Test connection: the count, and the source said honestly.
     await win.getByTestId("test-connection").click();
@@ -149,8 +151,8 @@ test("saves a provider endpoint, lists its models, and streams a turn against it
 
     await win.getByTestId("settings-done").click();
 
-    // The composer's picker is the same catalogue, and the chosen model survived.
-    await expect(win.getByLabel("Model")).toHaveValue("mock/text");
+    // The composer shows the model that is actually configured.
+    await expect(win.getByLabel("Model")).toHaveValue(configuredModel);
 
     // The turn streams through the configured endpoint. If the base URL were not in
     // effect, this would go to the unpackaged default and never answer.

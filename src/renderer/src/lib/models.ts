@@ -167,3 +167,29 @@ export function describeCatalog(catalog: ModelCatalog): CatalogLine {
     }
   }
 }
+
+/** True when the typed id is one the endpoint actually advertises. */
+export function isModelInCatalog(catalog: ModelCatalog, value: string): boolean {
+  const id = value.trim();
+  if (id === "" || catalog.state !== "ready") return false;
+  return catalog.options.some((option) => option.id === id);
+}
+
+/**
+ * The id a provider is asking for when it rejects a bare model with
+ * `INVALID_DEPLOYMENT_TARGET`. Returns null when the error is not that, or when the
+ * value already carries a prefix — a double prefix is never suggested.
+ */
+export function suggestDeploymentModel(message: string, current: string): string | null {
+  const id = current.trim().replace(/^\/+/, "");
+  if (id === "") return null;
+  if (id.startsWith("deployments/")) return null;
+  if (!message.includes("INVALID_DEPLOYMENT_TARGET") && !message.includes("/deployments/")) {
+    return null;
+  }
+  // The provider's own text is a template (`/deployments/{serverless|poolId}/`), which
+  // the character class deliberately does not match; a concrete pool id does match.
+  const concrete = /deployments\/([A-Za-z0-9_-]+)\//.exec(message);
+  const target = concrete?.[1] ?? "serverless";
+  return `/deployments/${target}/${id}`;
+}

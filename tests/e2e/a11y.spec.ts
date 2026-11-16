@@ -102,7 +102,7 @@ test("settings", async () => {
     // The form only exists once settings.get answered; auditing the loading skeleton
     // would be auditing a screen the user sees for a few milliseconds.
     await expect(win.getByTestId("base-url")).toBeVisible();
-    await expect(win.getByTestId("model-select")).toContainText("mock/text", { timeout: 15_000 });
+    await expect(win.getByTestId("model-input")).not.toHaveValue("", { timeout: 15_000 });
     await audit(win, "settings");
   } finally {
     await app.close();
