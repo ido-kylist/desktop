@@ -1,4 +1,4 @@
-# Cleon Desktop 0.2.0
+# Cleon Desktop 0.2.1
 
 A local-first AI chat client for macOS. Everything you type lives in SQLite on your own
 disk; conversations branch instead of forming a flat list; cost is shown per message; MCP
@@ -12,45 +12,67 @@ it. That is expected:
 xattr -dr com.apple.quarantine /Applications/Cleon.app
 ```
 
-## New since 0.1.0
+Or: double-click once, then **System Settings → Privacy & Security → Open Anyway**.
 
-| | |
-|---|---|
-| **Provider settings** | paste a key, set a base URL, pick a model — the packaged app talks to any OpenAI-compatible endpoint without environment variables. The key goes to the OS keychain via `safeStorage`; only `••••last4` ever crosses to the UI |
-| **Attachments** | drag, paste, or pick up to 10 files (25 MiB each) — images and PDF/TXT/MD — with distinct refusals for `too_large`, `too_many`, `unsupported_type` |
-| **Native shell** | `⌥Space` launcher over any app, menu-bar tray, `cleon://thread/<id>` deep links, notifications |
-| **Projects, assistants, prompts** | organise threads into projects, send under an assistant (own model, temperature, system prompt), and keep a searchable prompt library with `{{date}}`/`{{time}}`/`{{thread_title}}`/`{{project_name}}` expansion |
-| **MCP** | register stdio MCP servers, list their tools, and approve every call individually. Default-deny, a crash is contained to the server, and a kill switch exists |
-| **Knowledge** | ingest documents, chunk and embed them, and get answers with citation chips that expand to the exact source chunk |
-| **Versioned artifacts** | save assistant output as an artifact; every edit is a new immutable version with a switcher |
+## What changed in 0.2.1
+
+**The model is now a text field, not a dropdown.** A provider's catalog does not
+necessarily list the ids its own endpoint accepts, so a dropdown could not express a working
+model at all.
+
+- **Settings → Default model** and the **composer model** are free-text inputs, styled and
+  behaving like Base URL — with a Save button offered only when the value actually changed.
+- The fetched catalog is still there as a **suggestion list** (native datalist): start typing
+  and pick from what the endpoint advertises. You are never constrained to it.
+- A value outside the catalog says so plainly: *"Not in this endpoint's catalog — sending
+  anyway."*
+- **One-click prefix fix.** Some endpoints reject bare model ids and demand a deployment
+  prefix. On `INVALID_DEPLOYMENT_TARGET` the error banner offers a **Use
+  `/deployments/serverless/…`** button that rewrites the field — visible and reversible, never
+  a silent retry.
+- An empty model is refused before anything is written to the database.
+
+### If you use Sciforium
+
+Its `/v1/models` advertises `deepseek-ai/DeepSeek-V4.1-Flash-1017`, but completions reject that
+form:
+
+```
+/deployments/serverless/deepseek-ai/DeepSeek-V4.1-Flash-1017    ← works
+deepseek-ai/DeepSeek-V4.1-Flash-1017                             ← 400 INVALID_DEPLOYMENT_TARGET
+```
+
+Type the prefixed form, or let the error banner's button fill it in.
+
+## Everything from 0.2.0 is here
+
+Provider settings (key in the OS keychain, base URL, catalog) · attachments with caps and
+distinct refusals · native shell (`⌥Space` launcher, tray, `cleon://` deep links,
+notifications) · projects, assistants and a prompt library with variable expansion · MCP over
+stdio with per-call approval, containment and a kill switch · knowledge ingestion with
+citation chips · versioned artifacts.
 
 ## Measured, not claimed
 
-- **Performance** (`PERF.md`, 500 threads × 10 messages): `threads.list` p95 **0.65 ms**, FTS search p95 **6.91 ms**, `chat.thread` p95 **0.17 ms**. G2's 100 ms target is met by two orders of magnitude.
-- **Soak** (`docs/SOAK.md`): 30 minutes, **10,825 turns**, **43,300 streamed deltas**, zero crashes, zero leaked bus listeners, RSS plateauing at ~200 MB rather than climbing.
-- **Accessibility**: axe-core clean on chat, history, settings, knowledge and MCP — zero serious, critical, moderate or minor violations — plus a keyboard-only conversation test with no mouse events.
-- **Tests**: 475 unit/integration, 26 end-to-end against the real app, 2 against an installed bundle.
+- `threads.list` p95 **0.65 ms**, FTS search p95 **6.91 ms**, `chat.thread` p95 **0.17 ms**
+  against 500 threads × 10 messages (`PERF.md`).
+- Soak: 30 minutes, **10,825 turns**, zero crashes, zero leaked listeners, RSS plateau ~200 MB
+  (`docs/SOAK.md`).
+- axe clean on five screens; keyboard-only conversation test green.
+- **489 unit/integration, 26 end-to-end, 2 against an installed bundle.**
 
-## What is still not in this build
+## Still not in this build
 
-Recorded in `BACKLOG.md`, not silently missing:
-
-- **Fork / user-message branching.** Regenerate creates sibling variants; editing a user message into a branch and forking a subtree do not exist.
-- **PDF text extraction.** PDFs are stored and refused for ingestion rather than decoded into mojibake.
-- **Cross-thread knowledge search.** Retrieval is per-query over the corpus you have ingested; there is no corpus-level index view.
-- **ANN index.** Search is a linear scan over stored vectors — O(n), fine locally, stated plainly.
-- **Local-time prompt variables.** `{{date}}`/`{{time}}` are UTC so a prompt expands identically everywhere.
-- **Windows/Linux tray icon.** Text-only tray; needs a 16×16 asset there.
-- **Notarization.** Unsigned, as above.
+Recorded in `BACKLOG.md`, not silently missing: fork / user-message branching · PDF **text**
+extraction · cross-thread knowledge search · ANN index (search is an O(n) scan) · local-time
+prompt variables (`{{date}}`/`{{time}}` are UTC) · Windows/Linux tray icon · signing and
+notarization.
 
 ## Privacy facts worth stating
 
-- **Knowledge ingestion sends your document text to your configured provider** to compute embeddings. That is how retrieval works; it is not local.
-- The API key never reaches the renderer, and the app cannot read it back — only set, test, or clear.
-- MCP servers are child processes with pipe stdio and no shell. That is isolation from the app, **not** an OS sandbox: a malicious server still runs as you.
-
-## Verification behind this build
-
-Every PR merged through enforced branch protection with admins included; CI green required.
-The DMG below was mounted, installed to a clean path, and exercised by the packaged test
-suite for boot, protocol handshake, SQLite v7 with FTS5, and a completed chat turn.
+- **Knowledge ingestion sends your document text to your configured provider** to compute
+  embeddings. That is how retrieval works; it is not local.
+- The API key never reaches the renderer, and the app cannot read it back — only set, test, or
+  clear.
+- MCP servers are child processes with pipe stdio and no shell. That is isolation from the app,
+  **not** an OS sandbox: a malicious server still runs as you.
