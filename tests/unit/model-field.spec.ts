@@ -19,8 +19,8 @@ const ready: ModelCatalog = {
   source: "remote",
   note: "Read from the configured endpoint.",
   options: [
-    { id: "deepseek-ai/DeepSeek-V4.1-Flash-1017", label: "deepseek-ai/DeepSeek-V4.1-Flash-1017" },
-    { id: "mock/text", label: "mock/text" },
+    { id: "deepseek-ai/DeepSeek-V4.1-Flash-1017", ownedBy: "sciforium" },
+    { id: "mock/text", ownedBy: "cleon-mock" },
   ],
 };
 
