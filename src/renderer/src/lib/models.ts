@@ -36,7 +36,6 @@ export const MOCK_MODEL_IDS = [
  * because the unpackaged app talks to the mock by default; once a catalogue arrives
  * the first model in it wins, and a stored default wins over both.
  */
-export const DEFAULT_MODEL = "mock/text";
 
 /**
  * The select's options: the endpoint's list, de-duplicated in the order it gave,
@@ -117,19 +116,27 @@ export function buildModelCatalog(input: ModelCatalogInput): ModelCatalog {
 }
 
 /**
- * Which model is actually selected: the remembered id when this endpoint still lists
- * it, otherwise the first model it does list. Null only when there is nothing to pick
- * — the caller falls back to `DEFAULT_MODEL` so a send before the catalogue arrives is
- * still addressed to something.
+ * The configured model, verbatim.
+ *
+ * Nothing here consults the catalogue. A model id is a free-form string to the wire —
+ * `/deployments/d62861ef/deepseek-ai/…` is valid even though no `/v1/models` response
+ * lists it — so an endpoint's catalogue is a suggestion, never an authority over what
+ * the user typed. `null` means "unset"; an empty string means "the user cleared it",
+ * and those are different answers.
  */
-export function resolveDefaultModel(
-  stored: string | null | undefined,
-  options: readonly ModelOption[],
+export function configuredModel(
+  chosen: string | null,
+  saved: string | null | undefined,
 ): string | null {
-  if (stored !== null && stored !== undefined && options.some((option) => option.id === stored)) {
-    return stored;
-  }
-  return options[0]?.id ?? null;
+  return chosen ?? saved ?? null;
+}
+
+/**
+ * Used only when nothing is configured — a fresh profile. The endpoint's own first
+ * answer is a defensible default; substituting it for a configured value is not.
+ */
+export function firstCatalogModel(catalog: ModelCatalog): string {
+  return catalog.state === "ready" ? (catalog.options[0]?.id ?? "") : "";
 }
 
 export interface CatalogLine {

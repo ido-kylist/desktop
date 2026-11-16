@@ -1,3 +1,6 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { _electron as electron, expect, test } from "@playwright/test";
 
 /**
@@ -7,11 +10,20 @@ import { _electron as electron, expect, test } from "@playwright/test";
  * SQLite with the FTS5 index available.
  */
 test("boots, handshakes, reaches sqlite", async () => {
-  const app = await electron.launch({ args: ["."] });
+  // An isolated profile, like every other spec. Without it this shares Electron's
+  // single-instance lock with any copy of the app the user has open — including the
+  // installed one — and the launched app quits immediately, which reads as a blank window.
+  const profile = await mkdtemp(join(tmpdir(), "cleon-boot-"));
+  const app = await electron.launch({
+    args: ["."],
+    env: { ...process.env, CLEON_USER_DATA: profile },
+  });
 
   try {
     const win = await app.firstWindow();
-    await expect(win).toHaveTitle("Cleon");
+    // firstWindow() can resolve before the document title is committed; under a loaded
+    // machine that race is real, so give the first paint room rather than a 5 s default.
+    await expect(win).toHaveTitle("Cleon", { timeout: 20_000 });
 
     // Bridge present + protocol versions agree. The number is read from the
     // bridge rather than written here, so a version bump is not an e2e edit.
@@ -53,5 +65,6 @@ test("boots, handshakes, reaches sqlite", async () => {
     await expect(win.locator(".pings li")).toHaveCount(1);
   } finally {
     await app.close();
+    await rm(profile, { recursive: true, force: true });
   }
 });

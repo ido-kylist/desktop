@@ -31,14 +31,13 @@ import {
   subscribeToGenerationEvents,
   toIpcError,
 } from "./lib/ipc";
-import { DEFAULT_MODEL, type ModelOption, resolveDefaultModel } from "./lib/models";
+import { configuredModel, firstCatalogModel } from "./lib/models";
 import { type ChatMessageView, THREAD_STORAGE_KEY, useChatStore } from "./store/chat-store";
 
 /** The two surfaces this window has. A typed union, not a router: there is no URL. */
 type View = "chat" | "settings";
 
 /** A stable empty list, so the default-model derivation is not re-run for a new ref. */
-const NO_OPTIONS: readonly ModelOption[] = [];
 
 /**
  * Puts keyboard focus back on a variant switcher after the thread is re-read.
@@ -122,10 +121,9 @@ export function App(): React.JSX.Element {
 
   const [view, setView] = useState<View>("chat");
   /**
-   * The model this window will send. Null means "nobody picked one yet", so the
-   * stored default wins — and when even that is absent from the endpoint's catalogue,
-   * the first model it lists does. `DEFAULT_MODEL` only covers the gap before any
-   * catalogue has arrived.
+   * The model this window will send. Null means "nobody picked one yet", so the saved
+   * default wins. Neither is ever checked against the endpoint's catalogue — see the
+   * derivation below.
    */
   const [chosenModel, setChosenModel] = useState<string | null>(null);
   const [switching, setSwitching] = useState(false);
@@ -164,11 +162,16 @@ export function App(): React.JSX.Element {
     result: assistants.data?.items,
     error: toIpcError(assistants.error),
   });
-  const model =
-    resolveDefaultModel(
-      chosenModel ?? settings.data?.defaultModel ?? null,
-      catalog.state === "ready" ? catalog.options : NO_OPTIONS,
-    ) ?? DEFAULT_MODEL;
+  /**
+   * What this window will send. A configured value is used verbatim — an endpoint's
+   * catalogue is not an authority over the model id, and rewriting it silently sent a
+   * different model than the one on screen. The catalogue's first entry is only a
+   * default for a profile where nothing has been configured at all.
+   */
+  const configuredModelId = configuredModel(chosenModel, settings.data?.defaultModel);
+  // `null` means unset, so a fresh profile may borrow the endpoint's first entry.
+  // An empty string means the user cleared it, and an empty field must stay empty.
+  const model = configuredModelId !== null ? configuredModelId : firstCatalogModel(catalog);
 
   const history = useThreadHistory(threadId);
   const reloadThread = history.reload;

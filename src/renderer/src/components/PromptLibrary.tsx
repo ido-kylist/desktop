@@ -5,9 +5,10 @@ import { useDebouncedValue } from "../hooks/use-debounced-value";
 import { useDialogFocus } from "../hooks/use-dialog-focus";
 import { useModelCatalog } from "../hooks/use-model-catalog";
 import { usePrompts } from "../hooks/use-prompts";
+import { useSettings } from "../hooks/use-settings";
 import { buildCatalog, type Catalog } from "../lib/catalogs";
 import { createPrompt, deletePrompt, toIpcError, updatePrompt } from "../lib/ipc";
-import { DEFAULT_MODEL, resolveDefaultModel } from "../lib/models";
+import { firstCatalogModel } from "../lib/models";
 import { AssistantPanel } from "./AssistantPanel";
 
 /**
@@ -89,11 +90,16 @@ export function PromptLibrary({
   );
 }
 
-/** The assistant tab needs the current model, which only the catalogue knows. */
+/**
+ * The assistant tab suggests a starting model for a *new* assistant. It must prefer what
+ * the user configured and only fall back to the endpoint's first entry when nothing is
+ * configured — otherwise a new assistant inherits a model nobody chose.
+ */
 function AssistantsTab(): React.JSX.Element {
   const { catalog } = useModelCatalog();
-  const model =
-    resolveDefaultModel(null, catalog.state === "ready" ? catalog.options : []) ?? DEFAULT_MODEL;
+  const settings = useSettings();
+  const configured = settings.data?.defaultModel ?? "";
+  const model = configured.trim() !== "" ? configured : firstCatalogModel(catalog);
   return <AssistantPanel model={model} />;
 }
 

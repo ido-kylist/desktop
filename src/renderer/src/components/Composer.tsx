@@ -13,7 +13,7 @@ import {
 import type { Catalog } from "../lib/catalogs";
 import { describeCatalogState } from "../lib/catalogs";
 import { addAttachments } from "../lib/ipc";
-import { describeCatalog, type ModelCatalog } from "../lib/models";
+import { describeCatalog, isModelInCatalog, type ModelCatalog } from "../lib/models";
 import { AttachmentChip } from "./AttachmentChip";
 
 /**
@@ -208,6 +208,13 @@ export function Composer({
   };
 
   const catalogue = describeCatalog(models);
+  // Free text means a valid id the endpoint does not advertise. Say so where the user
+  // sends from, not only in Settings — and say it plainly, not as an error.
+  const modelOutsideCatalog =
+    assistantId === null &&
+    model.trim() !== "" &&
+    models.state === "ready" &&
+    !isModelInCatalog(models, model);
 
   /**
    * Archived or otherwise unlisted assistants still work — main resolves them by id —
@@ -402,11 +409,22 @@ export function Composer({
             {catalogue.text}
           </output>
         )}
+        {assistantId === null && model.trim() === "" && (
+          <output className="composer-note warn" data-testid="composer-model-missing">
+            Set a model in Settings before sending.
+          </output>
+        )}
+        {modelOutsideCatalog && (
+          <output className="composer-note muted" data-testid="composer-model-custom">
+            Not in this endpoint&rsquo;s catalog — sending anyway.
+          </output>
+        )}
         <div className="composer-buttons">
           <button
             type="button"
             className="btn"
-            disabled={streaming || disabled || value.trim() === ""}
+            data-testid="composer-send"
+            disabled={streaming || disabled || value.trim() === "" || model.trim() === ""}
             onClick={submit}
           >
             Send
