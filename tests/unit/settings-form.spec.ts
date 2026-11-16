@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   buildModelCatalog,
+  configuredModel,
   describeCatalog,
   describeModelSource,
+  firstCatalogModel,
   type ModelCatalogResult,
   modelOptions,
-  resolveDefaultModel,
 } from "../../src/renderer/src/lib/models.js";
 import {
   isDirty,
@@ -273,27 +274,58 @@ describe("buildModelCatalog", () => {
   });
 });
 
-describe("resolveDefaultModel", () => {
-  const options = [
-    { id: "a", ownedBy: null },
-    { id: "b", ownedBy: null },
-  ];
-
-  it("keeps the stored model when the endpoint still lists it", () => {
-    expect(resolveDefaultModel("b", options)).toBe("b");
+describe("configuredModel", () => {
+  it("prefers the session choice", () => {
+    expect(configuredModel("chosen", "saved")).toBe("chosen");
   });
 
-  it("falls back to the first model when the stored one is gone", () => {
-    expect(resolveDefaultModel("retired-model", options)).toBe("a");
+  it("falls back to the saved value when nothing was chosen", () => {
+    expect(configuredModel(null, "saved")).toBe("saved");
   });
 
-  it("uses the first model when nothing was stored", () => {
-    expect(resolveDefaultModel(null, options)).toBe("a");
-    expect(resolveDefaultModel(undefined, options)).toBe("a");
+  // The regression: a deployment-prefixed id is a valid model even though no
+  // /v1/models response lists it. It must survive verbatim.
+  it("preserves a saved value the endpoint does not list", () => {
+    expect(
+      configuredModel(null, "/deployments/d62861ef/deepseek-ai/DeepSeek-V4.1-Flash-1017"),
+    ).toBe("/deployments/d62861ef/deepseek-ai/DeepSeek-V4.1-Flash-1017");
   });
 
-  it("returns null when there is nothing to pick", () => {
-    expect(resolveDefaultModel("b", [])).toBeNull();
+  it("treats an explicit clear as a value, not as unset", () => {
+    expect(configuredModel("", "saved")).toBe("");
+    expect(configuredModel(null, "")).toBe("");
+  });
+
+  it("returns null only when nothing is configured at all", () => {
+    expect(configuredModel(null, null)).toBeNull();
+    expect(configuredModel(null, undefined)).toBeNull();
+  });
+});
+
+describe("firstCatalogModel", () => {
+  const ready = buildModelCatalog({
+    loading: false,
+    error: null,
+    result: {
+      models: [
+        { id: "first", ownedBy: null },
+        { id: "second", ownedBy: null },
+      ],
+      source: "remote",
+      message: null,
+    },
+  });
+
+  it("uses the endpoint's first entry", () => {
+    expect(firstCatalogModel(ready)).toBe("first");
+  });
+
+  it("is empty while loading, empty, or failed — never an invented id", () => {
+    expect(firstCatalogModel({ state: "loading" })).toBe("");
+    expect(firstCatalogModel({ state: "empty", source: "remote", note: "none" })).toBe("");
+    expect(firstCatalogModel({ state: "error", error: { code: "INTERNAL", message: "x" } })).toBe(
+      "",
+    );
   });
 });
 
